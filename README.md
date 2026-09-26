@@ -2,6 +2,8 @@
 
 An interactive **Git** visualizer, sandbox, and tutorial for version control.
 
+**Live:** https://alisadeghiaghili.github.io/learn-git/
+
 Git's power is not the commit message — it is the three-area model. LearnGit makes that material flow visible: **Working Tree → Staging → Repository → Remote**.
 
 ## Features
