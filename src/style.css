@@ -481,65 +481,77 @@ body {
   color: #fff;
 }
 
-/* ── Levels panel ── */
-.levels-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: 340px;
-  height: 100%;
-  background: var(--panel);
-  border-left: 1px solid var(--line);
-  z-index: 40;
-  overflow: auto;
-  padding: 16px;
-}
-
-.levels-panel h2 {
-  margin: 0 0 12px;
-  font-size: 16px;
-}
-
+/* ── Levels modal list ── */
 .series-block {
-  margin-bottom: 16px;
+  margin: 16px 0 8px;
 }
 
-.series-block h4 {
+.series-block h3 {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--haze);
 }
 
-.level-item {
+.level-list {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  margin-bottom: 6px;
-  cursor: pointer;
-  background: var(--panel-2);
+  flex-direction: column;
+  gap: 6px;
 }
 
-.level-item:hover {
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.level-row:hover {
   border-color: var(--haze);
 }
 
-.level-item.active {
+.level-row.active {
   border-color: var(--repo);
 }
 
-.level-item .solved {
-  color: var(--ok);
-  font-size: 11px;
+.level-row .name {
+  flex: 1;
 }
 
-.level-item .stars {
-  color: var(--warn);
+.level-row .par-note {
+  color: var(--haze);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.level-row .chip {
+  flex-shrink: 0;
   font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--haze);
+}
+
+.level-row .chip.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.level-row.solved {
+  border-color: rgba(52, 211, 153, 0.35);
 }
 
 /* ── Confetti canvas ── */

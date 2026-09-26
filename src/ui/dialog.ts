@@ -10,6 +10,7 @@ export interface ModalOptions {
   title: string;
   bodyHtml: string;
   actions?: ModalAction[];
+  onClose?: () => void;
 }
 
 export function renderMarkdown(md: string): string {
@@ -118,7 +119,12 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-export function showModal(opts: ModalOptions): void {
+export interface ModalHandle {
+  el: HTMLElement;
+  close: () => void;
+}
+
+export function showModal(opts: ModalOptions): ModalHandle {
   const existing = document.querySelector('.modal-backdrop');
   existing?.remove();
 
@@ -131,12 +137,16 @@ export function showModal(opts: ModalOptions): void {
   modal.querySelector('.slides')!.innerHTML = opts.bodyHtml;
 
   const actions = modal.querySelector('.modal-actions')!;
+  const close = () => {
+    backdrop.remove();
+    opts.onClose?.();
+  };
   for (const a of opts.actions ?? [{ label: 'Close', className: 'primary', onClick: () => undefined }]) {
     const btn = document.createElement('button');
     btn.textContent = a.label;
     if (a.className) btn.className = a.className;
     btn.addEventListener('click', () => {
-      backdrop.remove();
+      close();
       a.onClick?.();
     });
     actions.appendChild(btn);
@@ -144,4 +154,5 @@ export function showModal(opts: ModalOptions): void {
 
   backdrop.appendChild(modal);
   document.body.appendChild(backdrop);
+  return { el: modal, close };
 }

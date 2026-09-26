@@ -9,7 +9,7 @@ import { createBoard, type BoardHandles } from './board';
 import { createTerminal, type TerminalHandles } from './terminal';
 import { showModal, renderMarkdown } from './dialog';
 import { burstConfetti } from './confetti';
-import { loadProgress, markSolved, bestCount, isSolved, openShareUrl, copyText } from './progress';
+import { loadProgress, markSolved, bestCount, isSolved } from './progress';
 import { buildSolutionStatus } from './ui-help';
 import { allLevels, seriesOrder } from '../levels';
 import { shortSha } from '../engine/hash';
@@ -25,7 +25,6 @@ export class App {
   private board!: BoardHandles;
   private term!: TerminalHandles;
   private dock!: HTMLElement;
-  private levelsPanel?: HTMLElement;
   private levelNameEl!: HTMLElement;
   private solved = false;
   private commandCount = 0;
@@ -62,7 +61,7 @@ export class App {
     this.root.appendChild(toolbar);
     this.levelNameEl = toolbar.querySelector('.level-name') as HTMLElement;
 
-    toolbar.querySelector('[data-action="levels"]')!.addEventListener('click', () => this.toggleLevels());
+    toolbar.querySelector('[data-action="levels"]')!.addEventListener('click', () => this.openLevels());
     toolbar.querySelector('[data-action="goal"]')!.addEventListener('click', () => {
       this.dock.classList.toggle('hidden');
       this.dock.style.display = this.dock.style.display === 'none' ? '' : this.dock.style.display === '' ? 'none' : '';
@@ -101,6 +100,12 @@ export class App {
   }
 
   private handleLine(raw: string): void {
+    const lower = raw.trim().toLowerCase();
+    if (lower === 'levels' || lower === 'level') {
+      this.term.print(`learngit › ${raw}`, 'cmd');
+      this.openLevels();
+      return;
+    }
     if (this.level && isSolved(this.level.id)) {
       // still allow commands after solve
     }
@@ -212,48 +217,41 @@ export class App {
     this.refresh();
   }
 
-  private toggleLevels(): void {
-    if (this.levelsPanel) {
-      this.levelsPanel.remove();
-      this.levelsPanel = undefined;
-      return;
-    }
-    const panel = document.createElement('div');
-    panel.className = 'levels-panel';
+  private openLevels(): void {
     const progress = loadProgress();
-    let html = `<h2>Levels</h2>`;
+    let body = `<p>Pick a challenge. Each level has a goal, hint, solution, and par.</p>`;
     for (const series of seriesOrder) {
       const items = allLevels.filter((l) => l.series === series);
       if (!items.length) continue;
-      html += `<div class="series-block"><h4>${series}</h4>`;
+      body += `<div class="series-block"><h3>${escapeHtml(series)}</h3><div class="level-list">`;
       for (const l of items) {
         const solved = !!progress[l.id]?.solved;
         const best = progress[l.id]?.bestCommands;
-        html += `
-          <div class="level-item${this.level?.id === l.id ? ' active' : ''}" data-level="${l.id}">
-            <div>
-              <div>${escapeHtml(l.name)}</div>
-              <div class="stars">${'★'.repeat(l.difficulty)}${'☆'.repeat(5 - l.difficulty)} · par ${l.par}${best != null ? ` · best ${best}` : ''}</div>
-            </div>
-            <div class="solved">${solved ? '✓' : ''}</div>
-          </div>`;
+        body += `
+          <button type="button" class="level-row${this.level?.id === l.id ? ' active' : ''}${solved ? ' solved' : ''}" data-level="${l.id}">
+            <span class="name">${escapeHtml(l.name)}</span>
+            <span class="par-note">par ${l.par}${best != null ? ` · best ${best}` : ''}</span>
+            <span class="chip ${solved ? 'ok' : ''}">${solved ? '✓ solved' : '★'.repeat(l.difficulty) + '☆'.repeat(5 - l.difficulty)}</span>
+          </button>`;
       }
-      html += `</div>`;
+      body += `</div></div>`;
     }
-    html += `<button type="button" data-action="share" style="width:100%;margin-top:12px;padding:8px;border-radius:6px;border:1px solid #2E3D4D;background:#22303C;color:#E8EEF4;cursor:pointer">Copy share link</button>`;
-    panel.innerHTML = html;
-    panel.querySelectorAll('[data-level]').forEach((el) => {
+
+    const modal = showModal({
+      title: 'Levels',
+      bodyHtml: body,
+      actions: [{ label: 'Close', className: 'ghost', onClick: () => this.term.focus() }],
+      onClose: () => this.term.focus(),
+    });
+
+    modal.el.querySelectorAll('[data-level]').forEach((el) => {
       el.addEventListener('click', () => {
         const id = (el as HTMLElement).dataset.level;
         const lvl = allLevels.find((l) => l.id === id);
+        modal.close();
         if (lvl) this.loadLevel(lvl);
       });
     });
-    panel.querySelector('[data-action="share"]')?.addEventListener('click', () => {
-      void copyText(openShareUrl());
-    });
-    document.body.appendChild(panel);
-    this.levelsPanel = panel;
   }
 
   private loadLevel(level: LevelDef): void {
@@ -273,10 +271,9 @@ export class App {
         actions: [
           { label: 'Start', className: 'primary', onClick: () => this.term.focus() },
         ],
+        onClose: () => this.term.focus(),
       });
     }
-    this.levelsPanel?.remove();
-    this.levelsPanel = undefined;
     this.refresh();
   }
 
