@@ -126,7 +126,6 @@ export const en: Catalog = {
     partyMode: 'Party mode',
     github: 'GitHub',
     githubTitle: 'View repository on GitHub',
-    visitors: (count) => `${count} learners`,
     visitorsTitle: 'Total unique learners who trained on LearnGit',
     support: 'Buy me a coffee',
     supportTitle: 'Support the project on Buy Me a Coffee',

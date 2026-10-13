@@ -127,7 +127,6 @@ export const fa: Catalog = {
     partyMode: 'جشن اتمام مرحله',
     github: 'گیت‌هاب',
     githubTitle: 'مشاهده مخزن پروژه در گیت‌هاب',
-    visitors: (count) => `${count} یادگیرنده`,
     visitorsTitle: 'تعداد کل یادگیرندگانی که با LearnGit تمرین کرده‌اند',
     support: 'حمایت مالی',
     supportTitle: 'حمایت از پروژه در Buy Me a Coffee',
