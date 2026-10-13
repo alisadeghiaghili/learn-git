@@ -194,17 +194,18 @@ function helpText(): string {
     'LearnGit — teaching simulator (not a real git binary)',
     '',
     'Git commands:',
-    '  git init | status | add <path|.> | commit -m "msg" | log [--oneline]',
-    '  git diff [--staged] | show [<ref>] | restore <path> | rm <path>',
-    '  git branch [<name>] [-d <name>] | switch <name> | checkout <name>',
-    '  git merge <branch> [--abort] | rebase <branch> | cherry-pick <hash|branch> | tag <name>',
-    '  git remote add <name> <url> | push [-u] [<remote> <branch>] | pull | fetch',
+    '  git init | clone <url> | status | add <path|.> | commit -m "msg" [--amend]',
+    '  git log [--oneline] | diff [--staged] | show [<ref>] | restore <path>',
+    '  git rm <path> | mv <from> <to> | branch [<name>] [-d <name>]',
+    '  git switch <name> | checkout <name> | merge <branch> [--abort]',
+    '  git rebase <branch> | cherry-pick <hash|branch> | tag <name>',
+    '  git remote add <name> <url> | push [-u] [--force] [<remote> <branch>] | pull | fetch',
     '  git reset [--soft|--mixed|--hard] <ref> | revert HEAD | stash [pop]',
     '',
     'Conflict flow: git status → edit <path> → git add <path> → git commit',
     '',
     'Workspace simulators:',
-    '  edit <path> | rm <path> | cat <path> | ls',
+    '  edit <path> | rm <path> | cat <path> | ls | gitignore <pattern>',
     '',
     'Meta:',
     '  levels | curriculum | concepts | lesson | hint | steps | show solution',
@@ -281,6 +282,11 @@ export function execCommand(raw: string, ctx: ExecContext): CommandResult {
       .sort();
     return ok(paths.length ? paths.join('\n') : '(empty)');
   }
+  if (cmd === 'gitignore') {
+    const pattern = rest[0];
+    if (!pattern) return fail('usage: gitignore <pattern>  (e.g. "*.log", "dist", "node_modules")');
+    return gitIgnore(ctx.state, pattern);
+  }
   // bare `rm` is a simulator delete; `git rm` handled below
   if (cmd === 'rm' && !isGit(parts)) {
     const path = rest[0];
@@ -349,6 +355,10 @@ export function execCommand(raw: string, ctx: ExecContext): CommandResult {
       return gitRevert(ctx.state, args);
     case 'stash':
       return gitStash(ctx.state, args);
+    case 'mv':
+      return gitMv(ctx.state, args);
+    case 'clone':
+      return gitClone(ctx.state, args);
     case 'rev-parse':
       return ok(currentTip(ctx.state) || 'fatal: ambiguous argument');
     case 'reflog':
@@ -402,6 +412,33 @@ function gitInit(state: RepoState): CommandResult {
   return ok('Initialized empty Git repository in /workspace/.git/', 'none');
 }
 
+function matchIgnore(pattern: string, path: string): boolean {
+  if (pattern === path) return true;
+  // Directory prefix (e.g. "dist" matches "dist/foo.js").
+  if (pattern.endsWith('/') ? path.startsWith(pattern) : path.startsWith(pattern + '/')) return true;
+  // Extension (e.g. "*.log") or trailing wildcard.
+  if (pattern.startsWith('*.')) {
+    const ext = pattern.slice(1); // ".log"
+    return path.endsWith(ext);
+  }
+  if (pattern === '*') return true;
+  return false;
+}
+
+function gitIgnore(state: RepoState, pattern: string): CommandResult {
+  if (!state.initialized) return fail('fatal: not a git repository');
+  if (!state.gitignore.includes(pattern)) state.gitignore.push(pattern);
+  let n = 0;
+  for (const f of Object.values(state.files)) {
+    if (f.tracked) continue; // ignore only affects untracked files
+    if (!f.gitignored && matchIgnore(pattern, f.path)) {
+      f.gitignored = true;
+      n++;
+    }
+  }
+  return ok(`gitignore: added "${pattern}"${n ? ` — ${n} file(s) now ignored` : ''}`, 'none');
+}
+
 function gitAdd(state: RepoState, args: string[]): CommandResult {
   if (!state.initialized) return fail('fatal: not a git repository');
   const flags = args.filter((a) => a.startsWith('-'));
@@ -447,6 +484,9 @@ function gitAdd(state: RepoState, args: string[]): CommandResult {
 function gitCommit(state: RepoState, args: string[]): CommandResult {
   if (!state.initialized) return fail('fatal: not a git repository');
   const message = parseMessageArg(args);
+  const amend = args.includes('--amend');
+
+  if (amend) return gitAmend(state, message);
   if (!message) return fail('error: switch `m` requires a value (use -m "message")');
 
   if (state.merging) {
@@ -524,6 +564,46 @@ function gitCommit(state: RepoState, args: string[]): CommandResult {
   }
   state.staging = [];
   return ok(`[${(state.detachedHead ? 'detached' : state.HEAD)} ${shortSha(commit.hash)}] ${message}`, 'commit');
+}
+
+function gitAmend(state: RepoState, message: string | undefined): CommandResult {
+  if (!state.initialized || !state.hasCommits) {
+    return fail('fatal: --amend is only valid on a repository with commits');
+  }
+  const tip = state.commits.find((c) => c.hash === currentTip(state));
+  if (!tip) return fail('fatal: --amend is only valid on a repository with commits');
+
+  // Message: new one wins, else keep the current tip's message.
+  const msg = message ?? tip.message;
+  const tree = buildTreeFromIndex(state);
+
+  // Fold the amended change into the existing tip (in-place rewrite), so the
+  // commit count does not grow and no extra commit is appended.
+  tip.tree = { ...tree };
+  tip.message = msg;
+  state.lastCommitMessage = msg;
+
+  // Sync file flags and clear the index.
+  const staged = stagedPaths(state);
+  for (const p of Object.keys(tree)) {
+    const f = state.files[p];
+    if (!f) continue;
+    f.tracked = true;
+    f.headBlob = tree[p];
+    f.staged = false;
+    f.dirty = false;
+  }
+  for (const p of staged) {
+    const f = state.files[p];
+    if (f && f.deleted) {
+      f.tracked = false;
+      f.headBlob = undefined;
+      f.staged = false;
+      f.present = false;
+    }
+  }
+  state.staging = [];
+  return ok(`[${(state.detachedHead ? 'detached' : state.HEAD)} ${shortSha(tip.hash)}] ${msg}`, 'commit');
 }
 
 function gitShow(state: RepoState, args: string[]): CommandResult {
@@ -912,18 +992,22 @@ function gitRemote(state: RepoState, args: string[]): CommandResult {
   return fail(`git remote: '${sub}' is not a learn-git command`);
 }
 
-function resolveRemote(state: RepoState, args: string[]): { remoteName: string; branchName: string; setU: boolean } {
+function resolveRemote(
+  state: RepoState,
+  args: string[],
+): { remoteName: string; branchName: string; setU: boolean; force: boolean } {
   const setU = args.includes('-u') || args.includes('--set-upstream');
+  const force = args.includes('-f') || args.includes('--force') || args.includes('--force-with-lease');
   const pos = args.filter((a) => !a.startsWith('-'));
   const remoteName = pos[0] ?? state.remotes[0]?.name ?? 'origin';
   const branchName = pos[1] ?? state.HEAD;
-  return { remoteName, branchName, setU };
+  return { remoteName, branchName, setU, force };
 }
 
 function gitPush(state: RepoState, args: string[]): CommandResult {
   if (!state.initialized || !state.hasCommits) return fail('fatal: not a git repository');
   if (!state.remotes.length) return fail('fatal: No configured push destination.');
-  const { remoteName, branchName, setU } = resolveRemote(state, args);
+  const { remoteName, branchName, setU, force } = resolveRemote(state, args);
   const remote = state.remotes.find((r) => r.name === remoteName);
   if (!remote) return fail(`fatal: '${remoteName}' does not appear to be a git repository`);
 
@@ -933,16 +1017,28 @@ function gitPush(state: RepoState, args: string[]): CommandResult {
 
   const name = `${remoteName}/${br.name}`;
   const existing = state.remoteBranches.find((r) => r.name === name);
+
+  // Non-fast-forward: the remote tip is not an ancestor of the local tip.
+  const diverged =
+    !!existing && existing.commit !== commit && !ancestorsOf(state, commit).has(existing.commit);
+  if (diverged && !force) {
+    return fail(
+      `To ${remote.url}\n ! [rejected]        ${br.name} -> ${br.name} (non-fast-forward)\nerror: failed to push some refs to '${remote.url}'\nhint: Updates were rejected because the tip of your current branch is behind\nhint: its remote counterpart. Force push or pull first.`,
+    );
+  }
+
   if (existing) existing.commit = commit;
   else state.remoteBranches.push({ name, remote: remoteName, branch: br.name, commit });
 
   if (setU) br.upstream = name;
   state.pushCount++;
+  if (force) state.forcePushCount++;
+  const marker = existing ? (force ? '+  [forced]     ' : '   [updated]    ') : ' * [new branch]  ';
   return ok(
     [
       `Enumerating objects: 3, done.`,
       `To ${remote.url}`,
-      ` * [new branch]      ${br.name} -> ${br.name}${setU ? `\nbranch '${br.name}' set up to track '${name}'.` : ''}`,
+      `${marker}${br.name} -> ${br.name}${setU ? `\nbranch '${br.name}' set up to track '${name}'.` : ''}`,
     ].join('\n'),
     'push',
   );
@@ -1128,6 +1224,51 @@ function gitStash(state: RepoState, args: string[]): CommandResult {
     return ok(`Dropped ${entry.id} (${entry.message})`, 'stash');
   }
   return fail(`git stash: '${sub}' is not a learn-git command`);
+}
+
+function gitMv(state: RepoState, args: string[]): CommandResult {
+  if (!state.initialized) return fail('fatal: not a git repository');
+  const pos = args.filter((a) => !a.startsWith('-'));
+  const from = pos[0];
+  const to = pos[1];
+  if (!from || !to) return fail('usage: git mv <from> <to>');
+  const f = state.files[from];
+  if (!f || !f.present) return fail(`fatal: not under version control: ${from}`);
+  if (state.files[to] && state.files[to].present) {
+    return fail(`fatal: destination path '${to}' already exists`);
+  }
+  const wasTracked = f.tracked;
+  const moved = makeFile(to, f.kind, {
+    contentId: f.contentId,
+    tracked: wasTracked,
+    headBlob: wasTracked ? f.headBlob : undefined,
+    present: true,
+    staged: true,
+    gitignored: f.gitignored,
+  });
+  state.files[to] = moved;
+  delete state.files[from];
+  if (!state.staging.includes(to)) state.staging.push(to);
+  return ok(`renamed: ${from} -> ${to}`, 'stage');
+}
+
+function gitClone(state: RepoState, args: string[]): CommandResult {
+  const url = args.find((a) => !a.startsWith('-'));
+  if (!url) return fail('usage: git clone <url>');
+  if (state.initialized && state.commits.length) {
+    return fail('fatal: destination path already exists and is not an empty directory');
+  }
+  state.initialized = true;
+  state.remotes.push({ name: 'origin', url });
+  const seed = makeFile('README.md', 'docs', { tracked: true });
+  state.files['README.md'] = seed;
+  const commit = addCommit(state, 'Clone: initial', { 'README.md': seed.contentId }, []);
+  seed.headBlob = seed.contentId;
+  state.branches = [{ name: 'main', commit: commit.hash, current: true, upstream: 'origin/main' }];
+  state.HEAD = 'main';
+  state.detachedHead = false;
+  state.remoteBranches.push({ name: 'origin/main', remote: 'origin', branch: 'main', commit: commit.hash });
+  return ok(`Cloning into '/workspace'...\nremote: Enumerating objects: done.\nReceiving objects: done.`, 'commit');
 }
 
 type StashEntrySnapshot = Record<string, { contentId: string; present: boolean; staged: boolean }>;

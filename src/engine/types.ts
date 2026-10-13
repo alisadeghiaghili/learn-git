@@ -99,6 +99,8 @@ export interface RepoState {
   lastCommitMessage?: string;
   /** Number of push events this session (for goals). */
   pushCount: number;
+  /** Number of force pushes this session (for goals). */
+  forcePushCount: number;
   /** Number of pull/fetch events this session. */
   fetchCount: number;
   /** Rebase in progress (source branch name). */
@@ -160,6 +162,7 @@ export type GoalCheck =
   | { kind: 'upstreamSet'; branch: string }
   | { kind: 'pushCount'; min: number }
   | { kind: 'fetchCount'; min: number }
+  | { kind: 'forcePush'; min: number }
   | { kind: 'tagExists'; name: string }
   | { kind: 'stashDepth'; min: number }
   | { kind: 'stashEmpty'; value?: boolean }

@@ -2,7 +2,12 @@ import './style.css';
 import { App } from './ui/app';
 import { allLevels } from './levels';
 import { showModal, renderMarkdown } from './ui/dialog';
-import { COFFEE_BUTTON_HTML, WELCOME } from './ui/share';
+import { COFFEE_BUTTON_HTML } from './ui/share';
+import { initLang, getLang } from './i18n/lang';
+import { ui } from './i18n/ui';
+
+// Apply the persisted language (and RTL for Persian) before first paint.
+initLang();
 
 const root = document.querySelector('#app');
 if (!root) throw new Error('#app root missing');
@@ -11,7 +16,7 @@ const app = new App(root as HTMLElement);
 
 const params = new URLSearchParams(window.location.search);
 if (!params.has('NODEMO')) {
-  const w = WELCOME;
+  const w = ui(getLang()).welcome;
   showModal({
     title: w.title,
     bodyHtml: renderMarkdown(
@@ -20,7 +25,7 @@ if (!params.has('NODEMO')) {
         '',
         w.board,
         '',
-        w.tracks,
+        w.tracks.join('\n'),
         '',
         w.meta,
         '',
@@ -32,13 +37,8 @@ if (!params.has('NODEMO')) {
         w.publisher,
         w.publisherBody,
         '',
-        w.github,
-        '',
-        w.coffee,
-        '',
         COFFEE_BUTTON_HTML,
         '',
-        w.toolbar,
       ].join('\n'),
     ),
     actions: [

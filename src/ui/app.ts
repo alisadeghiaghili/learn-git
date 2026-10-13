@@ -15,6 +15,33 @@ import { allLevels, seriesOrder } from '../levels';
 import { shortSha } from '../engine/hash';
 import { currentTip, isClean, stagedPaths, untrackedPaths, unstagedPaths } from '../engine/state';
 import { REPO_URL, COFFEE_URL } from './share';
+import { getLang, setLang, onLangChange, LANGS } from '../i18n/lang';
+import { ui } from '../i18n/ui';
+import { getLevelText } from '../i18n/levels';
+import { getTopic, allTopics } from '../learning';
+
+/** Localized series (section) names; English is identity. */
+const SERIES_NAMES: Record<'en' | 'fa' | 'de', Record<string, string>> = {
+  en: {},
+  fa: {
+    Basics: 'مبانی',
+    'Diff & Show': 'تفاوت و نمایش',
+    Branching: 'شاخه‌بندی',
+    Remotes: 'ریموت‌ها',
+    Undo: 'واگرد',
+    'History craft': 'ساخت تاریخچه',
+    'Field practice': 'تمرین عملی',
+  },
+  de: {
+    Basics: 'Basics',
+    'Diff & Show': 'Diff & Show',
+    Branching: 'Branching',
+    Remotes: 'Remotes',
+    Undo: 'Rückgängig',
+    'History craft': 'Historie',
+    'Field practice': 'Praxis',
+  },
+};
 
 export class App {
   private root: HTMLElement;
@@ -33,6 +60,7 @@ export class App {
     this.root = root;
     this.state = sandboxState();
     this.renderShell();
+    onLangChange(() => this.onLanguageChange());
     this.term.print('LearnGit — teaching simulator (not a real git binary)', 'meta');
     this.term.print('Type `help` for commands, or open Levels to start a drill.', 'meta');
     this.term.print('');
@@ -40,34 +68,130 @@ export class App {
     this.term.focus();
   }
 
+  /** Re-render all localized chrome when the language switches. */
+  private onLanguageChange(): void {
+    this.term.print('', 'meta');
+    this.refresh();
+    if (this.level) this.showLevelIntro(this.level);
+  }
+
+  /** Localized text for the current level (falls back to English inline). */
+  private levelText() {
+    return getLevelText(this.level!, getLang());
+  }
+
+  /** Localized series name (English identity fallback). */
+  private seriesName(name: string): string {
+    return SERIES_NAMES[getLang()][name] ?? name;
+  }
+
+  /** Localized short label for a goal-check kind, falling back to English. */
+  private goalLabel(kind: string): string {
+    return ui(getLang()).goalLabels[kind] ?? kind;
+  }
+
+  /** Open the from-zero knowledge library. */
+  private openLearn(): void {
+    const S = ui(getLang());
+    let body = `<p>${escapeHtml(S.learn.subtitle)}</p><div class="level-list">`;
+    for (const t of allTopics(getLang())) {
+      body += `<button type="button" class="level-row" data-topic="${escapeHtml(t.id)}"><span class="name">${escapeHtml(t.title)}</span></button>`;
+    }
+    body += `</div>`;
+    const modal = showModal({
+      title: S.learn.title,
+      bodyHtml: body,
+      actions: [{ label: S.modal.close, className: 'ghost', onClick: () => this.term.focus() }],
+      onClose: () => this.term.focus(),
+    });
+    modal.el.querySelectorAll('[data-topic]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = (el as HTMLElement).dataset.topic;
+        modal.close();
+        if (id) this.openTopic(id);
+      });
+    });
+  }
+
+  /** Open the full from-zero / mindset / industry explanation for one topic. */
+  private openTopic(id: string): void {
+    const t = getTopic(id, getLang());
+    if (!t) {
+      this.term.print(`unknown topic "${id}"`, 'err');
+      return;
+    }
+    const S = ui(getLang());
+    const md = [
+      `**${t.title}**`,
+      '',
+      `## ${S.learn.fromZero}`,
+      ...t.fromZero.map((s) => `- **${s.level}** — ${s.body}`),
+      '',
+      `## ${S.learn.mindset}`,
+      t.mindset,
+      '',
+      `## ${S.learn.industry}`,
+      ...t.industry.map((n) => `- ${n}`),
+    ].join('\n');
+    showModal({
+      title: t.title,
+      bodyHtml: renderMarkdown(md),
+      actions: [{ label: S.modal.close, className: 'primary', onClick: () => this.term.focus() }],
+      onClose: () => this.term.focus(),
+    });
+  }
+
+  /** Show the level's localized intro dialog. */
+  private showLevelIntro(level: LevelDef): void {
+    const S = ui(getLang());
+    const lt = getLevelText(level, getLang());
+    if (!lt.startDialog.length) return;
+    const md = lt.startDialog.map((s) => `### ${s.title ?? lt.name}\n\n${s.markdown}`).join('\n\n');
+    showModal({
+      title: lt.name,
+      bodyHtml: renderMarkdown(md),
+      actions: [{ label: S.modal.start, className: 'primary', onClick: () => this.term.focus() }],
+      onClose: () => this.term.focus(),
+    });
+  }
+
   private renderShell(): void {
     this.root.innerHTML = '';
 
+    const S = ui(getLang());
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
     toolbar.innerHTML = `
       <div class="brand">Learn<span>Git</span></div>
       <div class="level-name"></div>
-      <button data-action="levels" type="button">Levels</button>
-      <button data-action="goal" type="button">Goal</button>
-      <button data-action="hint" type="button">Hint</button>
-      <button data-action="solution" type="button">Solution</button>
-      <button data-action="undo" type="button">Undo</button>
-      <button data-action="reset" type="button">Reset</button>
-      <button data-action="sandbox" type="button">Sandbox</button>
-      <a href="${REPO_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--haze);font-size:12px;text-decoration:none;margin-left:4px">GitHub</a>
-      <a href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--work);font-size:12px;text-decoration:none">Buy me a coffee</a>
+      <span class="lang-switch" role="group" aria-label="Language">
+        ${LANGS.map((l) => `<button type="button" data-lang="${l}" class="lang-btn${l === getLang() ? ' active' : ''}">${l.toUpperCase()}</button>`).join('')}
+      </span>
+      <button data-action="learn" type="button">${S.toolbar.learn}</button>
+      <button data-action="levels" type="button">${S.toolbar.levels}</button>
+      <button data-action="goal" type="button">${S.toolbar.goal}</button>
+      <button data-action="hint" type="button">${S.toolbar.hint}</button>
+      <button data-action="solution" type="button">${S.toolbar.solution}</button>
+      <button data-action="undo" type="button">${S.toolbar.undo}</button>
+      <button data-action="reset" type="button">${S.toolbar.reset}</button>
+      <button data-action="sandbox" type="button">${S.toolbar.sandbox}</button>
+      <a href="${REPO_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--haze);font-size:12px;text-decoration:none;margin-left:4px">${S.toolbar.github}</a>
+      <a href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--work);font-size:12px;text-decoration:none">${S.toolbar.coffee}</a>
     `;
     this.root.appendChild(toolbar);
     this.levelNameEl = toolbar.querySelector('.level-name') as HTMLElement;
 
+    toolbar.querySelectorAll('[data-lang]').forEach((el) => {
+      el.addEventListener('click', () => setLang((el as HTMLElement).dataset.lang as 'en' | 'fa' | 'de'));
+    });
+    toolbar.querySelector('[data-action="learn"]')!.addEventListener('click', () => this.openLearn());
     toolbar.querySelector('[data-action="levels"]')!.addEventListener('click', () => this.openLevels());
     toolbar.querySelector('[data-action="goal"]')!.addEventListener('click', () => {
       this.dock.classList.toggle('hidden');
       this.dock.style.display = this.dock.style.display === 'none' ? '' : this.dock.style.display === '' ? 'none' : '';
     });
     toolbar.querySelector('[data-action="hint"]')!.addEventListener('click', () => {
-      this.term.print(this.level?.hint ?? 'No hint in sandbox.', 'meta');
+      this.term.print(this.level ? this.levelText().hint : ui(getLang()).dock.sandboxHint, 'meta');
     });
     toolbar.querySelector('[data-action="solution"]')!.addEventListener('click', () => {
       const sol = this.level?.solution ?? [];
@@ -84,7 +208,7 @@ export class App {
     mainWrap.style.minHeight = '0';
     this.root.appendChild(mainWrap);
 
-    this.board = createBoard(mainWrap);
+    this.board = createBoard(mainWrap, () => ui(getLang()).board);
 
     const main = document.createElement('div');
     main.className = 'main';
@@ -109,19 +233,18 @@ export class App {
     if (this.level && isSolved(this.level.id)) {
       // still allow commands after solve
     }
+    const lt = this.level ? this.levelText() : undefined;
     const ctx: ExecContext = {
       state: this.state,
       levelId: this.level?.id,
-      goalText: this.level
-        ? `${this.level.objective}\n\nChecks:\n${checkGoal(this.level.goal, this.state)
-            .map((c) => `${c.ok ? '[x]' : '[ ]'} ${c.label} — ${c.detail}`)
+      goalText: this.level && lt
+        ? `${lt.objective}\n\nChecks:\n${checkGoal(this.level.goal, this.state)
+            .map((c) => `${c.ok ? '[x]' : '[ ]'} ${this.goalLabel(c.kind)} — ${c.detail}`)
             .join('\n')}`
         : undefined,
       solution: this.level?.solution,
-      hint: this.level?.hint,
-      lesson: this.level
-        ? this.level.startDialog.map((s) => `### ${s.title ?? this.level!.name}\n\n${s.markdown}`).join('\n\n')
-        : undefined,
+      hint: lt?.hint,
+      lesson: lt ? lt.startDialog.map((s) => `### ${s.title ?? lt.name}\n\n${s.markdown}`).join('\n\n') : undefined,
     };
 
     this.undoStack.push(cloneState(this.state));
@@ -149,21 +272,24 @@ export class App {
       this.solved = true;
       markSolved(this.level.id, this.commandCount);
       burstConfetti();
-      this.term.print(`\n✓ Level solved: ${this.level.name} (${this.commandCount} commands, par ${this.level.par})`, 'ok');
+      const S = ui(getLang());
+      const lt = this.levelText();
+      const best = bestCount(this.level.id);
+      this.term.print(`\n✓ ${S.modal.solvedTitle}: ${lt.name} (${this.commandCount} · par ${this.level.par})`, 'ok');
       showModal({
-        title: 'Level solved',
+        title: S.modal.solvedTitle,
         bodyHtml: renderMarkdown(
           [
-            `**${this.level.name}**`,
+            `**${lt.name}**`,
             '',
-            `Commands: ${this.commandCount} · Par: ${this.level.par}${bestCount(this.level.id) != null ? ` · Best: ${bestCount(this.level.id)}` : ''}`,
+            `${S.dock.commandsUsed(this.commandCount)} · ${S.levels.par(this.level.par)}${best != null ? ` · ${S.levels.best(best)}` : ''}`,
             '',
-            ...(this.level.fieldNotes?.length ? ['**Field notes**', ...this.level.fieldNotes.map((n) => `- ${n}`)] : []),
+            ...(lt.fieldNotes?.length ? [`**${S.dock.fieldNotes}**`, ...lt.fieldNotes.map((n) => `- ${n}`)] : []),
           ].join('\n'),
         ),
         actions: [
-          { label: 'Stay here', className: 'ghost', onClick: () => this.refresh() },
-          { label: 'Next level', className: 'primary', onClick: () => this.nextLevel() },
+          { label: S.modal.stay, className: 'ghost', onClick: () => this.refresh() },
+          { label: S.modal.next, className: 'primary', onClick: () => this.nextLevel() },
         ],
       });
       this.refresh();
@@ -218,29 +344,31 @@ export class App {
   }
 
   private openLevels(): void {
+    const S = ui(getLang());
     const progress = loadProgress();
-    let body = `<p>Pick a challenge. Each level has a goal, hint, solution, and par.</p>`;
+    let body = `<p>${escapeHtml(S.levels.subtitle)}</p>`;
     for (const series of seriesOrder) {
       const items = allLevels.filter((l) => l.series === series);
       if (!items.length) continue;
-      body += `<div class="series-block"><h3>${escapeHtml(series)}</h3><div class="level-list">`;
+      body += `<div class="series-block"><h3>${escapeHtml(this.seriesName(series))}</h3><div class="level-list">`;
       for (const l of items) {
         const solved = !!progress[l.id]?.solved;
         const best = progress[l.id]?.bestCommands;
+        const ltext = getLevelText(l, getLang());
         body += `
           <button type="button" class="level-row${this.level?.id === l.id ? ' active' : ''}${solved ? ' solved' : ''}" data-level="${l.id}">
-            <span class="name">${escapeHtml(l.name)}</span>
-            <span class="par-note">par ${l.par}${best != null ? ` · best ${best}` : ''}</span>
-            <span class="chip ${solved ? 'ok' : ''}">${solved ? '✓ solved' : '★'.repeat(l.difficulty) + '☆'.repeat(5 - l.difficulty)}</span>
+            <span class="name">${escapeHtml(ltext.name)}</span>
+            <span class="par-note">${escapeHtml(S.levels.par(l.par))}${best != null ? ` · ${escapeHtml(S.levels.best(best))}` : ''}</span>
+            <span class="chip ${solved ? 'ok' : ''}">${solved ? escapeHtml(S.levels.solved) : '★'.repeat(l.difficulty) + '☆'.repeat(5 - l.difficulty)}</span>
           </button>`;
       }
       body += `</div></div>`;
     }
 
     const modal = showModal({
-      title: 'Levels',
+      title: S.levels.title,
       bodyHtml: body,
-      actions: [{ label: 'Close', className: 'ghost', onClick: () => this.term.focus() }],
+      actions: [{ label: S.modal.close, className: 'ghost', onClick: () => this.term.focus() }],
       onClose: () => this.term.focus(),
     });
 
@@ -261,19 +389,10 @@ export class App {
     this.undoStack = [];
     this.commandCount = 0;
     this.solved = false;
-    this.term.print(`\n── Level: ${level.name} (${level.series}) ──`, 'meta');
-    this.term.print(level.objective, 'meta');
-    if (level.startDialog.length) {
-      const md = level.startDialog.map((s) => `### ${s.title ?? level.name}\n\n${s.markdown}`).join('\n\n');
-      showModal({
-        title: level.name,
-        bodyHtml: renderMarkdown(md),
-        actions: [
-          { label: 'Start', className: 'primary', onClick: () => this.term.focus() },
-        ],
-        onClose: () => this.term.focus(),
-      });
-    }
+    const lt = getLevelText(level, getLang());
+    this.term.print(`\n── ${this.seriesName(level.series)} · ${lt.name} ──`, 'meta');
+    this.term.print(lt.objective, 'meta');
+    this.showLevelIntro(level);
     this.refresh();
   }
 
@@ -281,19 +400,20 @@ export class App {
     this.board.update(this.state);
     if (effect) this.board.flash(effect);
     this.levelNameEl.textContent = this.level
-      ? `${this.level.series} · ${this.level.name}`
-      : 'Sandbox';
+      ? `${this.seriesName(this.level.series)} · ${this.levelText().name}`
+      : ui(getLang()).dock.sandbox;
     this.renderDock();
   }
 
   private renderDock(): void {
+    const S = ui(getLang());
     const level = this.level;
     if (!level) {
       this.dock.innerHTML = `
-        <h3>Sandbox</h3>
-        <div class="objective">Free-form Git simulation. Try <code style="font-family:var(--font-mono)">help</code>, <code style="font-family:var(--font-mono)">curriculum</code>, <code style="font-family:var(--font-mono)">field</code>, or open <strong>Levels</strong>.</div>
+        <h3>${escapeHtml(S.dock.sandbox)}</h3>
+        <div class="objective">${renderMarkdown(S.dock.sandboxHint)}</div>
         <div class="field-notes">${FIELD_NOTES.slice(0, 3).map((n) => `• ${escapeHtml(n)}`).join('<br>')}</div>
-        <h3>Live status</h3>
+        <h3>${escapeHtml(S.dock.liveStatus)}</h3>
         <div class="check-list">
           ${this.liveStatusHtml()}
         </div>
@@ -301,56 +421,73 @@ export class App {
       return;
     }
 
+    const lt = getLevelText(level, getLang());
     const checks = checkGoal(level.goal, this.state);
     const steps = buildSolutionStatus(level.solution, this.state.commandHistory);
     const best = bestCount(level.id);
 
     this.dock.innerHTML = `
-      ${this.solved ? `<div class="solved-banner">SOLVED · ${this.commandCount} cmds${best != null ? ` · best ${best}` : ''}</div>` : ''}
-      <h3>Objective</h3>
-      <div class="objective">${escapeHtml(level.objective)}</div>
-      <h3>You are learning</h3>
-      <div class="learning-list">${level.learning.map((l) => `<span class="chip">${escapeHtml(l)}</span>`).join('')}</div>
-      <h3>Goal checks</h3>
+      ${this.solved ? `<div class="solved-banner">${escapeHtml(S.dock.solvedBanner(this.commandCount, best ?? undefined))}</div>` : ''}
+      <h3>${escapeHtml(S.dock.objective)}</h3>
+      <div class="objective">${escapeHtml(lt.objective)}</div>
+      <h3>${escapeHtml(S.dock.learning)}</h3>
+      <div class="learning-list">${lt.startDialog.length ? this.learningChipsHtml(level.learning) : ''}</div>
+      <h3>${escapeHtml(S.dock.goalChecks)}</h3>
       <div class="check-list">
         ${checks
           .map(
             (c) =>
-              `<div class="check-item ${c.ok ? 'ok' : 'fail'}"><span class="mark">${c.ok ? '✓' : '○'}</span><span><strong>${escapeHtml(c.label)}</strong><br><span style="color:var(--haze)">${escapeHtml(c.detail)}</span></span></div>`,
+              `<div class="check-item ${c.ok ? 'ok' : 'fail'}"><span class="mark">${c.ok ? '✓' : '○'}</span><span><strong>${escapeHtml(this.goalLabel(c.kind))}</strong><br><span style="color:var(--haze)">${escapeHtml(c.detail)}</span></span></div>`,
           )
           .join('')}
       </div>
-      <h3>Par · ${level.par} · difficulty ${'★'.repeat(level.difficulty)}</h3>
-      <div class="par-line">commands used: ${this.commandCount}</div>
-      <h3>Solution steps</h3>
+      <h3>${escapeHtml(S.dock.parLine(level.par, level.difficulty))}</h3>
+      <div class="par-line">${escapeHtml(S.dock.commandsUsed(this.commandCount))}</div>
+      <h3>${escapeHtml(S.dock.solutionSteps)}</h3>
       <div class="check-list">
         ${steps
           .map(
             (s) =>
-              `<div class="check-item ${s.done ? 'ok' : 'fail'}"><span class="mark">${s.done ? '✓' : '○'}</span><span><code style="font-family:var(--font-mono);font-size:11px">${escapeHtml(s.command)}</code><br><span style="color:var(--haze)">${escapeHtml(s.note)}</span></span></div>`,
+              `<div class="check-item ${s.done ? 'ok' : 'fail'}"><span class="mark">${s.done ? '✓' : '○'}</span><span><code style="font-family:var(--font-mono);font-size:11px">${escapeHtml(s.command)}</code><br><span style="color:var(--haze)">${escapeHtml(s.optional ? S.dock.optional : S.dock.required)}</span></span></div>`,
           )
           .join('')}
       </div>
       ${
-        level.fieldNotes?.length
-          ? `<h3>Field notes</h3><div class="field-notes">${level.fieldNotes.map((n) => escapeHtml(n)).join('<br><br>')}</div>`
+        lt.fieldNotes?.length
+          ? `<h3>${escapeHtml(S.dock.fieldNotes)}</h3><div class="field-notes">${lt.fieldNotes.map((n) => escapeHtml(n)).join('<br><br>')}</div>`
           : ''
       }
     `;
+    // Make each "you are learning" chip open its from-zero topic.
+    this.dock.querySelectorAll('[data-topic]').forEach((el) => {
+      el.addEventListener('click', () => this.openTopic((el as HTMLElement).dataset.topic!));
+    });
+  }
+
+  /** Learning chips that show the localized topic title and open its lesson. */
+  private learningChipsHtml(learning: string[]): string {
+    return learning
+      .map((id) => {
+        const t = getTopic(id, getLang());
+        if (!t) return `<span class="chip">${escapeHtml(id)}</span>`;
+        return `<button type="button" class="chip chip-topic" data-topic="${escapeHtml(id)}" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</button>`;
+      })
+      .join('');
   }
 
   private liveStatusHtml(): string {
+    const st = ui(getLang()).status;
     const s = this.state;
     const tip = s.hasCommits ? shortSha(currentTip(s)) : '—';
     return [
-      row('branch', s.detachedHead ? `detached @ ${tip}` : s.HEAD),
-      row('HEAD', tip),
-      row('clean', isClean(s) ? 'yes' : 'no'),
-      row('staged', stagedPaths(s).join(', ') || '—'),
-      row('unstaged', unstagedPaths(s).join(', ') || '—'),
-      row('untracked', untrackedPaths(s).join(', ') || '—'),
-      row('commits', String(s.commits.length)),
-      row('remotes', s.remotes.map((r) => r.name).join(', ') || '—'),
+      row(st.branch, s.detachedHead ? `detached @ ${tip}` : s.HEAD),
+      row(st.head, tip),
+      row(st.clean, isClean(s) ? 'yes' : 'no'),
+      row(st.staged, stagedPaths(s).join(', ') || '—'),
+      row(st.unstaged, unstagedPaths(s).join(', ') || '—'),
+      row(st.untracked, untrackedPaths(s).join(', ') || '—'),
+      row(st.commits, String(s.commits.length)),
+      row(st.remotes, s.remotes.map((r) => r.name).join(', ') || '—'),
     ].join('');
 
     function row(k: string, v: string): string {

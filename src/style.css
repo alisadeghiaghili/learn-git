@@ -31,6 +31,17 @@ body {
   font-size: 14px;
 }
 
+/* Persian: swap to a Persian-capable UI font. Terminal stays LTR mono. */
+html[lang='fa'] {
+  --font-ui: 'Vazirmatn', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* The terminal is always left-to-right, even under RTL UI. */
+.terminal,
+.term-input-row {
+  direction: ltr;
+}
+
 #app {
   display: flex;
   flex-direction: column;
@@ -89,6 +100,51 @@ body {
 
 .toolbar button.danger {
   color: var(--err);
+}
+
+/* Language switcher (EN / FA / DE) */
+.lang-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.lang-btn {
+  background: var(--panel-2);
+  color: var(--haze);
+  border: none;
+  border-radius: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.lang-btn + .lang-btn {
+  border-inline-start: 1px solid var(--line);
+}
+
+.lang-btn.active {
+  background: var(--repo);
+  color: #fff;
+}
+
+/* Clickable "you are learning" topic chips */
+.chip-topic {
+  background: var(--panel-2);
+  color: var(--haze);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chip-topic:hover {
+  border-color: var(--stage);
+  color: var(--stage);
 }
 
 /* ── Board ── */
@@ -368,8 +424,8 @@ body {
   font-size: 12px;
   color: var(--haze);
   line-height: 1.45;
-  border-left: 3px solid var(--work);
-  padding-left: 10px;
+  border-inline-start: 3px solid var(--work);
+  padding-inline-start: 10px;
 }
 
 .solved-banner {

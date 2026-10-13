@@ -19,6 +19,7 @@ export function emptyState(): RepoState {
     gitignore: [],
     commandHistory: [],
     pushCount: 0,
+    forcePushCount: 0,
     fetchCount: 0,
     cherryPickCount: 0,
     conflicts: [],

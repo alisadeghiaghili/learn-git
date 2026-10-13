@@ -1,8 +1,24 @@
 /** Board: Working Tree → Staging → Repo → Remote. */
 
 import type { RepoState, WorkspaceFile } from '../engine/types';
+import type { FileStatus } from '../i18n/ui';
 import { shortSha } from '../engine/hash';
 import { currentTip, stagedPaths, untrackedPaths, unstagedPaths } from '../engine/state';
+
+export interface BoardLabels {
+  work: string;
+  stage: string;
+  repo: string;
+  remote: string;
+  emptyWorktree: string;
+  emptyIndex: string;
+  noCommits: string;
+  noRemote: string;
+  headDetached: (sha: string) => string;
+  tagPrefix: string;
+  stagedTag: string;
+  fileStatus: FileStatus;
+}
 
 export interface BoardHandles {
   root: HTMLElement;
@@ -10,24 +26,24 @@ export interface BoardHandles {
   flash: (effect: string) => void;
 }
 
-export function createBoard(parent: HTMLElement): BoardHandles {
+export function createBoard(parent: HTMLElement, labels: () => BoardLabels): BoardHandles {
   const root = document.createElement('div');
   root.className = 'board';
   root.innerHTML = `
     <div class="zone" data-zone="work">
-      <div class="zone-head"><span><span class="dot"></span>Working Tree</span></div>
+      <div class="zone-head"><span><span class="dot"></span><span data-zone-label="work"></span></span></div>
       <div class="zone-body" data-body="work"></div>
     </div>
     <div class="zone" data-zone="stage">
-      <div class="zone-head"><span><span class="dot"></span>Staging</span></div>
+      <div class="zone-head"><span><span class="dot"></span><span data-zone-label="stage"></span></span></div>
       <div class="zone-body" data-body="stage"></div>
     </div>
     <div class="zone" data-zone="repo">
-      <div class="zone-head"><span><span class="dot"></span>Repository</span></div>
+      <div class="zone-head"><span><span class="dot"></span><span data-zone-label="repo"></span></span></div>
       <div class="zone-body" data-body="repo"></div>
     </div>
     <div class="zone" data-zone="remote">
-      <div class="zone-head"><span><span class="dot"></span>Remote</span></div>
+      <div class="zone-head"><span><span class="dot"></span><span data-zone-label="remote"></span></span></div>
       <div class="zone-body" data-body="remote"></div>
     </div>
     <div class="branch-strip" data-body="branches"></div>
@@ -40,6 +56,8 @@ export function createBoard(parent: HTMLElement): BoardHandles {
   const remote = root.querySelector('[data-body="remote"]') as HTMLElement;
   const branches = root.querySelector('[data-body="branches"]') as HTMLElement;
 
+  const fs = () => labels().fileStatus;
+
   function fileCard(f: WorkspaceFile, mode: 'work' | 'stage'): HTMLElement {
     const el = document.createElement('div');
     const cls = ['card'];
@@ -48,7 +66,7 @@ export function createBoard(parent: HTMLElement): BoardHandles {
     else if (f.tracked && f.headBlob !== f.contentId) cls.push('dirty');
     else if (f.tracked) cls.push('tracked');
     el.className = cls.join(' ');
-    const status = f.gitignored
+    const statusKey = f.gitignored
       ? 'gitignored'
       : f.deleted
         ? 'deleted'
@@ -59,19 +77,27 @@ export function createBoard(parent: HTMLElement): BoardHandles {
             : f.headBlob !== f.contentId
               ? 'modified'
               : 'clean';
+    const L = labels();
     el.innerHTML = `
       <div class="path">${escapeHtml(f.path)}</div>
-      <div class="meta">${status} · ${shortSha(f.contentId)}${mode === 'stage' ? ' · staged' : ''}</div>
+      <div class="meta">${escapeHtml(fs()[statusKey] ?? statusKey)} · ${shortSha(f.contentId)}${mode === 'stage' ? ` · ${escapeHtml(L.stagedTag)}` : ''}</div>
     `;
     return el;
   }
 
   function update(state: RepoState): void {
+    const L = labels();
+    // Zone titles track the active language on every render.
+    for (const zone of ['work', 'stage', 'repo', 'remote'] as const) {
+      const el = root.querySelector(`[data-zone-label="${zone}"]`) as HTMLElement;
+      if (el) el.textContent = L[zone];
+    }
+
     // Working tree: present files that are not purely index-only chips
     work.innerHTML = '';
     const files = Object.values(state.files).filter((f) => f.present || f.deleted);
     if (!files.length) {
-      work.innerHTML = `<div class="empty-hint">empty worktree</div>`;
+      work.innerHTML = `<div class="empty-hint">${escapeHtml(L.emptyWorktree)}</div>`;
     } else {
       for (const f of files.sort((a, b) => a.path.localeCompare(b.path))) {
         work.appendChild(fileCard(f, 'work'));
@@ -82,7 +108,7 @@ export function createBoard(parent: HTMLElement): BoardHandles {
     stage.innerHTML = '';
     const staged = stagedPaths(state);
     if (!staged.length) {
-      stage.innerHTML = `<div class="empty-hint">index empty</div>`;
+      stage.innerHTML = `<div class="empty-hint">${escapeHtml(L.emptyIndex)}</div>`;
     } else {
       for (const p of staged) {
         const f = state.files[p];
@@ -95,7 +121,7 @@ export function createBoard(parent: HTMLElement): BoardHandles {
     const tip = currentTip(state);
     const recent = state.commits.slice(-4).reverse();
     if (!recent.length) {
-      repo.innerHTML = `<div class="empty-hint">no commits</div>`;
+      repo.innerHTML = `<div class="empty-hint">${escapeHtml(L.noCommits)}</div>`;
     } else {
       for (const c of recent) {
         const el = document.createElement('div');
@@ -111,7 +137,7 @@ export function createBoard(parent: HTMLElement): BoardHandles {
     // Remote
     remote.innerHTML = '';
     if (!state.remotes.length && !state.remoteBranches.length) {
-      remote.innerHTML = `<div class="empty-hint">no remote</div>`;
+      remote.innerHTML = `<div class="empty-hint">${escapeHtml(L.noRemote)}</div>`;
     } else {
       for (const r of state.remotes) {
         const el = document.createElement('div');
@@ -140,13 +166,13 @@ export function createBoard(parent: HTMLElement): BoardHandles {
     for (const t of state.tags) {
       const el = document.createElement('span');
       el.className = 'branch-chip';
-      el.textContent = `tag:${t.name}`;
+      el.textContent = `${L.tagPrefix}${t.name}`;
       branches.appendChild(el);
     }
     if (state.detachedHead) {
       const el = document.createElement('span');
       el.className = 'branch-chip current';
-      el.textContent = `HEAD detached @ ${shortSha(tip)}`;
+      el.textContent = L.headDetached(shortSha(tip));
       branches.appendChild(el);
     }
     void untrackedPaths;

@@ -961,14 +961,432 @@ const campRecover: LevelDef = {
   solution: ['git revert HEAD'],
 };
 
+/* ───────────────────────────── CORE (new) ───────────────────────────── */
+
+const coreAmend: LevelDef = {
+  id: 'core-amend',
+  series: 'Basics',
+  seriesTitle: 'Basics',
+  name: 'Amend the last commit',
+  difficulty: 2,
+  par: 3,
+  objective: 'Change README.md, stage it, and rewrite the last commit so its message includes "improved" — without adding a new commit.',
+  learning: ['commit', 'amend'],
+  fieldNotes: ['Amend only unpushed commits. Once a commit is on a shared remote, revert instead of rewriting it.'],
+  hint: '`edit README.md`, `git add README.md`, `git commit --amend -m "improved readme"`.',
+  startDialog: [
+    {
+      title: 'Amend',
+      markdown:
+        '`git commit --amend` folds your staged change into the **previous** commit: same slot, new content, optional new message.\n\nCommit count stays the same — you did not create a new snapshot on top.',
+    },
+  ],
+  startState: baseWithFiles({ 'README.md': { kind: 'docs' } }, { init: true, commits: 1 }),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'committedMessageIncludes', text: 'improved', requireFilesAny: ['README.md'] },
+      { kind: 'clean' },
+    ],
+  },
+  solution: ['edit README.md', 'git add README.md', 'git commit --amend -m "improved readme"'],
+};
+
+const coreIgnore: LevelDef = {
+  id: 'core-ignore',
+  series: 'Basics',
+  seriesTitle: 'Basics',
+  name: 'Ignore build artifacts',
+  difficulty: 1,
+  par: 2,
+  objective: 'Add an ignore rule so `build.log` is ignored and no longer shows up as an untracked file.',
+  learning: ['gitignore'],
+  fieldNotes: ['Commit `.gitignore` so the whole team ignores the same artifacts. Never ignore something you actually want to track.'],
+  hint: 'Run `gitignore *.log`, then check `git status` — build.log should be gone from untracked.',
+  startDialog: [
+    {
+      title: 'Ignore rules',
+      markdown:
+        '`.gitignore` tells Git to look past paths you do not want tracked: build output, secrets, logs.\n\nIgnored files simply disappear from `git status`.',
+    },
+  ],
+  startState: baseWithFiles(
+    { 'src/app.py': { kind: 'code' }, 'build.log': { kind: 'meta', tracked: false } },
+    { init: true, commits: 1 },
+  ),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'fileIgnored', path: 'build.log' },
+      { kind: 'clean' },
+    ],
+  },
+  solution: ['gitignore *.log', 'git status'],
+};
+
+const coreRm: LevelDef = {
+  id: 'core-rm',
+  series: 'Basics',
+  seriesTitle: 'Basics',
+  name: 'Delete a file with git',
+  difficulty: 2,
+  par: 2,
+  objective: 'Delete `notes.txt` under Git (track the deletion) and commit the removal.',
+  learning: ['rm', 'three-area'],
+  fieldNotes: ['`git rm` removes the file and stages the deletion. A plain filesystem `rm` leaves Git thinking it should still be there.'],
+  hint: '`git rm notes.txt`, then `git commit -m "remove notes"`.',
+  startDialog: [
+    {
+      title: 'Deletions are changes too',
+      markdown:
+        'Removing a file is a change, so it must be committed like any other.\n`git rm` stages the deletion so the next commit records it.',
+    },
+  ],
+  startState: baseWithFiles(
+    { 'README.md': { kind: 'docs' }, 'notes.txt': { kind: 'docs' } },
+    { init: true, commits: 1 },
+  ),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'fileMissing', paths: ['notes.txt'] },
+      { kind: 'committedMessageIncludes', text: 'remove notes' },
+      { kind: 'clean' },
+    ],
+  },
+  solution: ['git rm notes.txt', 'git commit -m "remove notes"'],
+};
+
+const coreMv: LevelDef = {
+  id: 'core-mv',
+  series: 'Basics',
+  seriesTitle: 'Basics',
+  name: 'Rename a file with git mv',
+  difficulty: 2,
+  par: 1,
+  objective: 'Rename `src/app.py` to `src/main.py` using Git so the rename is tracked and staged.',
+  learning: ['mv', 'three-area'],
+  fieldNotes: ['`git mv` is an atomic rename + stage. Git then often detects the rename later in `log`/`diff`.'],
+  hint: '`git mv src/app.py src/main.py`.',
+  startDialog: [
+    {
+      title: 'Atomic rename',
+      markdown:
+        'Renaming is two changes at once: the old path disappears, the new path appears.\n`git mv` does both and stages the result in one step.',
+    },
+  ],
+  startState: baseWithFiles({ 'src/app.py': { kind: 'code' } }, { init: true, commits: 1 }),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'filePresent', paths: ['src/main.py'] },
+      { kind: 'staged', paths: ['src/main.py'] },
+    ],
+  },
+  solution: ['git mv src/app.py src/main.py'],
+};
+
+const coreCommitConvention: LevelDef = {
+  id: 'core-commit-convention',
+  series: 'Basics',
+  seriesTitle: 'Basics',
+  name: 'Write a conventional message',
+  difficulty: 1,
+  par: 2,
+  objective: 'Add `src/login.py` and commit it with a Conventional-Commits message that starts with "feat: add login".',
+  learning: ['commit-convention'],
+  fieldNotes: ['`feat:`, `fix:`, `docs:` — a short type prefix makes changelogs and git-bisect far easier to read.'],
+  hint: '`git add src/login.py`, `git commit -m "feat: add login"`.',
+  startDialog: [
+    {
+      title: 'Message conventions',
+      markdown:
+        'Many teams use a prefix like `feat:`, `fix:`, `refactor:`.\nIt signals *intent*, not just what files changed.',
+    },
+  ],
+  startState: baseWithFiles(
+    { 'src/app.py': { kind: 'code' }, 'src/login.py': { kind: 'code', tracked: false } },
+    { init: true, commits: 1 },
+  ),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'committedMessageIncludes', text: 'feat: add login', requireFilesAny: ['src/login.py'] },
+      { kind: 'clean' },
+    ],
+  },
+  solution: ['git add src/login.py', 'git commit -m "feat: add login"'],
+};
+
+/* ───────────────────────────── DIFF (new) ───────────────────────────── */
+
+const diffShow: LevelDef = {
+  id: 'diff-show',
+  series: 'Diff & Show',
+  seriesTitle: 'Diff & Show',
+  name: 'Inspect a commit with show',
+  difficulty: 2,
+  par: 2,
+  objective: 'Read the history, then inspect the current commit in detail with `git show`.',
+  learning: ['show', 'commit'],
+  fieldNotes: ['`git show <sha>` is the fastest way to see one commit: its message, its parents, and the tree it produced.'],
+  hint: '`git log --oneline`, then `git show` (defaults to HEAD).',
+  startDialog: [
+    {
+      title: 'One commit, in full',
+      markdown:
+        '`git log` lists commits; `git show` opens one and prints its message, parents, and the files it recorded.\n\nUse it to understand exactly what a change did.',
+    },
+  ],
+  startState: baseWithFiles({ 'src/app.py': { kind: 'code' } }, { init: true, commits: 2 }),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'commitCount', min: 2 },
+      { kind: 'clean' },
+    ],
+  },
+  solution: ['git log --oneline', 'git show'],
+};
+
+/* ───────────────────────────── REMOTES (new) ───────────────────────────── */
+
+const remoteForcePush: LevelDef = {
+  id: 'remote-force-push',
+  series: 'Remotes',
+  seriesTitle: 'Remotes',
+  name: 'Force-push a rewritten branch',
+  difficulty: 4,
+  par: 1,
+  objective:
+    'You rewrote local history, so the remote tip no longer matches. A normal push is rejected — force-push `origin main` to overwrite it.',
+  learning: ['force-push', 'upstream'],
+  fieldNotes: [
+    'Only force-push branches you own. `--force-with-lease` refuses if the remote moved again since you last fetched — prefer it.',
+    'Never force-push a shared main: you would erase commits other people have.',
+  ],
+  hint: '`git push --force origin main` (a plain `git push` will be rejected as non-fast-forward).',
+  startDialog: [
+    {
+      title: 'Diverged branches',
+      markdown:
+        'After rebase or amend, your local history does not descend from the remote tip. Git refuses a normal push to avoid silently destroying remote work.\n\nForce push **overwrites** the remote — only safe when you are sure.',
+    },
+  ],
+  startState: (() => {
+    const s = baseWithFiles({ 'src/app.py': { kind: 'code' } }, { init: true, commits: 1 });
+    const base = s.commits[0].hash;
+    s.remotes = [{ name: 'origin', url: '/tmp/r.git' }];
+    s.branches[0].upstream = 'origin/main';
+    s.remoteBranches = [{ name: 'origin/main', remote: 'origin', branch: 'main', commit: base }];
+    // Local history is rewritten ahead of the remote.
+    s.files['src/app.py'].contentId = 'blob-local';
+    const localC = addCommit(s, 'local rewrite', { ...s.commits[0].tree, 'src/app.py': 'blob-local' }, [base]);
+    s.branches[0].commit = localC.hash;
+    // Remote advanced independently to a commit the local tip does not descend from.
+    const remoteC = {
+      hash: 'deadbe1',
+      message: 'remote work',
+      parents: [base],
+      tree: { 'src/app.py': 'blob-remote' },
+      author: 'Other <other@remote>',
+      timestamp: 1_700_000_001_000,
+    };
+    s.commits.push(remoteC);
+    s.remoteBranches[0].commit = remoteC.hash;
+    // Worktree matches the local tip.
+    s.files['src/app.py'].contentId = 'blob-local';
+    s.files['src/app.py'].headBlob = 'blob-local';
+    s.files['src/app.py'].tracked = true;
+    return s;
+  })(),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'forcePush', min: 1 },
+      { kind: 'remoteBranchAt', name: 'origin/main', commitMessageIncludes: 'local rewrite' },
+    ],
+  },
+  solution: ['git push --force origin main'],
+};
+
+/* ───────────────────────────── UNDO (new) ───────────────────────────── */
+
+const undoResetMixed: LevelDef = {
+  id: 'undo-reset-mixed',
+  series: 'Undo',
+  seriesTitle: 'Undo',
+  name: 'Mixed reset: unstage, keep edits',
+  difficulty: 3,
+  par: 1,
+  objective: 'Undo the last commit with `--mixed`: the changes leave the index but stay in the working tree as uncommitted edits.',
+  learning: ['reset-modes'],
+  fieldNotes: ['--mixed is the default mode. It is the polite way to "un-commit" while keeping your work to re-stage selectively.'],
+  hint: 'Run `git reset --mixed HEAD~1`. The file becomes dirty but not staged.',
+  startDialog: [
+    {
+      title: 'Mixed vs soft',
+      markdown:
+        'Both move the branch back one commit.\n- `--soft` keeps the changes **staged**\n- `--mixed` unstages them but keeps the edits on disk\n\nThis level wants the mixed behavior.',
+    },
+  ],
+  startState: (() => {
+    const s = baseWithFiles({ 'src/app.py': { kind: 'code' } }, { init: true, commits: 1 });
+    s.files['src/app.py'].contentId = 'blob-src/app.py-oops';
+    s.dataVersions['src/app.py'] = 1;
+    const c = addCommit(s, 'oops commit', { 'src/app.py': 'blob-src/app.py-oops' }, [s.commits[s.commits.length - 1].hash]);
+    s.branches[0].commit = c.hash;
+    s.files['src/app.py'].headBlob = 'blob-src/app.py-oops';
+    s.files['src/app.py'].tracked = true;
+    s.lastCommitMessage = 'oops commit';
+    return s;
+  })(),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'notStaged', paths: ['src/app.py'] },
+      { kind: 'dirty' },
+    ],
+  },
+  solution: ['git reset --mixed HEAD~1'],
+};
+
+const undoResetHard: LevelDef = {
+  id: 'undo-reset-hard',
+  series: 'Undo',
+  seriesTitle: 'Undo',
+  name: 'Hard reset: discard the commit',
+  difficulty: 3,
+  par: 1,
+  objective: 'Throw away the last commit **and** its changes with `--hard`, leaving the working tree clean.',
+  learning: ['reset-modes'],
+  fieldNotes: ['--hard is destructive: uncommitted work is gone. Run `git status` first. On shared branches prefer revert.'],
+  hint: 'Run `git reset --hard HEAD~1`. The tree should be clean afterwards.',
+  startDialog: [
+    {
+      title: 'The heavy undo',
+      markdown:
+        '`--hard` moves the branch back **and** rewrites the working tree to match, discarding the commit and its edits.\n\nUse it to abandon work you are sure about.',
+    },
+  ],
+  startState: (() => {
+    const s = baseWithFiles({ 'src/app.py': { kind: 'code' } }, { init: true, commits: 1 });
+    s.files['src/app.py'].contentId = 'blob-src/app.py-oops';
+    s.dataVersions['src/app.py'] = 1;
+    const c = addCommit(s, 'oops commit', { 'src/app.py': 'blob-src/app.py-oops' }, [s.commits[s.commits.length - 1].hash]);
+    s.branches[0].commit = c.hash;
+    s.files['src/app.py'].headBlob = 'blob-src/app.py-oops';
+    s.files['src/app.py'].tracked = true;
+    s.lastCommitMessage = 'oops commit';
+    return s;
+  })(),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'commitCount', min: 1 },
+      { kind: 'clean' },
+    ],
+  },
+  solution: ['git reset --hard HEAD~1'],
+};
+
+const recoverStart = (() => {
+  const s = baseWithFiles({ 'src/app.py': { kind: 'code' } }, { init: true, commits: 1 });
+  const base = s.commits[0].hash;
+  s.files['src/app.py'].contentId = 'blob-lost';
+  const lost = addCommit(s, 'lost work', { ...s.commits[0].tree, 'src/app.py': 'blob-lost' }, [base]);
+  // Reset main back to base, orphaning the lost commit. It still lives in
+  // commits[] (the reflog), so it can be found and rescued.
+  s.branches[0].commit = base;
+  s.HEAD = 'main';
+  s.files['src/app.py'].contentId = s.commits[0].tree['src/app.py'];
+  s.files['src/app.py'].headBlob = s.commits[0].tree['src/app.py'];
+  s.files['src/app.py'].dirty = false;
+  s.lastCommitMessage = 'lost work';
+  return { s, lostHash: lost.hash };
+})();
+
+const recoverReflog: LevelDef = {
+  id: 'recover-reflog',
+  series: 'Undo',
+  seriesTitle: 'Undo',
+  name: 'Rescue a lost commit via reflog',
+  difficulty: 4,
+  par: 3,
+  objective:
+    'A commit was reset away and is now orphaned. Find it in the reflog, check it out, and put it on a branch named `rescue`.',
+  learning: ['reflog', 'reflog-recovery'],
+  fieldNotes: [
+    'Almost every "lost" commit is still in `.git/logs/HEAD`. The reflog is your safety net.',
+    'Rescue with `git switch -c rescue <sha>` — the moment a branch points at it, it is no longer orphaned.',
+  ],
+  hint: '`git reflog` to find the "lost work" hash, `git switch <hash>`, then `git switch -c rescue`.',
+  startDialog: [
+    {
+      title: 'The reflog is your safety net',
+      markdown:
+        'A commit that no branch points to is **orphaned** — it will eventually be garbage-collected.\n\nBut Git records every HEAD move in the reflog, so you can always check out the lost hash and give it a branch.',
+    },
+  ],
+  startState: recoverStart.s,
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'headOn', branch: 'rescue' },
+      { kind: 'branchExists', name: 'rescue' },
+      { kind: 'headMessageIncludes', text: 'lost work' },
+    ],
+  },
+  solution: ['git reflog', `git switch ${recoverStart.lostHash}`, 'git switch -c rescue'],
+};
+
+/* ───────────────────────────── BASES (new) ───────────────────────────── */
+
+const coreClone: LevelDef = {
+  id: 'core-clone',
+  series: 'Basics',
+  seriesTitle: 'Basics',
+  name: 'Clone a remote repository',
+  difficulty: 1,
+  par: 1,
+  objective: 'Clone `/tmp/repo.git` to get a local copy with its history and an `origin` remote.',
+  learning: ['clone', 'remote'],
+  fieldNotes: ['`git clone` is the first step of most workflows. It creates the repo, checks out the default branch, and sets up `origin`.'],
+  hint: '`git clone /tmp/repo.git`.',
+  startDialog: [
+    {
+      title: 'Starting from someone else’s repo',
+      markdown:
+        '`git clone` downloads a repository, recreates its history locally, and configures `origin` for you.\n\nIt is the entry point to collaborating on a shared codebase.',
+    },
+  ],
+  startState: emptyState(),
+  goal: {
+    kind: 'allOf',
+    checks: [
+      { kind: 'initialized', value: true },
+      { kind: 'remoteConfigured', name: 'origin' },
+      { kind: 'filePresent', paths: ['README.md'] },
+    ],
+  },
+  solution: ['git clone /tmp/repo.git'],
+};
+
 export const allLevels: LevelDef[] = [
   basicsInit,
   basicsAddCommit,
+  coreCommitConvention,
   basicsEditAddCommit,
+  coreAmend,
+  coreRm,
+  coreMv,
+  coreIgnore,
+  coreClone,
   basicsStatusLog,
   diffUnstaged,
   diffStaged,
   diffRestore,
+  diffShow,
   branchCreate,
   branchSwitch,
   branchMergeFF,
@@ -976,9 +1394,13 @@ export const allLevels: LevelDef[] = [
   branchDetached,
   remoteAddPush,
   remotePull,
+  remoteForcePush,
   undoSoft,
+  undoResetMixed,
+  undoResetHard,
   undoRevert,
   undoStash,
+  recoverReflog,
   histTag,
   histCherryPick,
   histMergeConflict,

@@ -324,6 +324,101 @@ describe('simulators', () => {
   });
 });
 
+describe('amend', () => {
+  it('folds a staged change into the tip without adding a commit', () => {
+    const c = ctx(sandboxState());
+    const before = c.state.commits.length;
+    c.state.files['README.md'].contentId = 'v2';
+    execCommand('git add README.md', c);
+    const r = execCommand('git commit --amend -m "new message"', c);
+    expect(r.ok).toBe(true);
+    expect(c.state.commits.length).toBe(before); // no new commit
+    expect(c.state.commits[c.state.commits.length - 1].message).toBe('new message');
+    expect(c.state.commits[c.state.commits.length - 1].tree['README.md']).toBe('v2');
+  });
+
+  it('keeps the message when --amend has no -m', () => {
+    const c = ctx(sandboxState());
+    execCommand('git commit --amend', c); // nothing staged, but message kept
+    expect(c.state.commits.length).toBe(1);
+    expect(c.state.commits[0].message).toBe('Initial commit');
+  });
+});
+
+describe('gitignore', () => {
+  it('marks matching untracked files ignored and hides them from status', () => {
+    const c = ctx(sandboxState());
+    c.state.files['build.log'] = makeFile('build.log', 'meta', { tracked: false });
+    expect(execCommand('gitignore *.log', c).ok).toBe(true);
+    expect(c.state.files['build.log'].gitignored).toBe(true);
+    expect(c.state.files['config.yaml'].gitignored).toBe(false);
+    const r = execCommand('git status', c);
+    expect(r.output).not.toContain('build.log');
+  });
+});
+
+describe('force push', () => {
+  function diverged(c: ReturnType<typeof ctx>) {
+    const base = c.state.commits[0].hash;
+    execCommand('git remote add origin /tmp/r.git', c);
+    execCommand('git push -u origin main', c); // remote at base
+    // Local advances one commit.
+    c.state.files['README.md'].contentId = 'local-v2';
+    execCommand('git add README.md', c);
+    execCommand('git commit -m "local work"', c);
+    // Remote advances independently to a commit the local tip does not descend from.
+    const remoteOnly = {
+      hash: 'deadbe1',
+      message: 'remote work',
+      parents: [base],
+      tree: { 'README.md': 'blob-remote' },
+      author: 'Other <other@remote>',
+      timestamp: 1_700_000_001_000,
+    };
+    c.state.commits.push(remoteOnly);
+    c.state.remoteBranches[0].commit = remoteOnly.hash;
+  }
+
+  it('rejects a plain push when the remote is diverged', () => {
+    const c = ctx(sandboxState());
+    diverged(c);
+    const r = execCommand('git push origin main', c);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('non-fast-forward');
+  });
+
+  it('force push overwrites and is counted', () => {
+    const c = ctx(sandboxState());
+    diverged(c);
+    const r = execCommand('git push --force origin main', c);
+    expect(r.ok).toBe(true);
+    expect(c.state.forcePushCount).toBe(1);
+    expect(
+      c.state.remoteBranches.find((b) => b.name === 'origin/main')?.commit,
+    ).toBe(c.state.branches.find((b) => b.name === 'main')!.commit);
+  });
+});
+
+describe('mv and clone', () => {
+  it('git mv renames and stages', () => {
+    const c = ctx(sandboxState());
+    const r = execCommand('git mv src/app.py src/app2.py', c);
+    expect(r.ok).toBe(true);
+    expect(c.state.files['src/app.py']).toBeUndefined();
+    expect(c.state.files['src/app2.py']?.staged).toBe(true);
+  });
+
+  it('git clone seeds an initialized repo with a remote', () => {
+    const c = ctx(); // uninitialized empty state
+    const r = execCommand('git clone /tmp/repo.git', c);
+    expect(r.ok).toBe(true);
+    expect(c.state.initialized).toBe(true);
+    expect(c.state.remotes[0].name).toBe('origin');
+    expect(c.state.commits.length).toBe(1);
+    expect(c.state.remoteBranches[0].name).toBe('origin/main');
+  });
+});
+
 describe('level solutions reach goals', () => {
   it.each(allLevels.map((l) => [l.id, l] as const))('%s solution satisfies goal', (_id, level) => {
     const state = cloneState(level.startState);

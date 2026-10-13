@@ -14,10 +14,14 @@ export interface CheckResult {
   ok: boolean;
   label: string;
   detail: string;
+  /** The goal-check kind — the UI uses it to look up a localized label. */
+  kind: GoalCheck['kind'];
 }
 
+type CheckResultBase = Omit<CheckResult, 'kind'>;
+
 export function checkGoal(goal: GoalCheck, state: RepoState): CheckResult[] {
-  return flatten(goal).map((c) => evaluate(c, state));
+  return flatten(goal).map((c) => ({ ...evaluate(c, state), kind: c.kind }));
 }
 
 export function goalSatisfied(goal: GoalCheck, state: RepoState): boolean {
@@ -29,7 +33,7 @@ function flatten(goal: GoalCheck): GoalCheck[] {
   return [goal];
 }
 
-function evaluate(g: GoalCheck, state: RepoState): CheckResult {
+function evaluate(g: GoalCheck, state: RepoState): CheckResultBase {
   switch (g.kind) {
     case 'initialized': {
       const want = g.value ?? true;
@@ -216,6 +220,13 @@ function evaluate(g: GoalCheck, state: RepoState): CheckResult {
         ok: state.fetchCount >= g.min,
         label: `Fetched/pulled at least ${g.min} time(s)`,
         detail: `${state.fetchCount}`,
+      };
+    }
+    case 'forcePush': {
+      return {
+        ok: state.forcePushCount >= g.min,
+        label: `Force-pushed at least ${g.min} time(s)`,
+        detail: `${state.forcePushCount} force-push(es)`,
       };
     }
     case 'tagExists': {
