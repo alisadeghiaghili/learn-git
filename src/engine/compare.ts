@@ -28,6 +28,14 @@ export function goalSatisfied(goal: GoalCheck, state: RepoState): boolean {
   return checkGoal(goal, state).every((r) => r.ok);
 }
 
+export function evaluateGoal(state: RepoState, goal: GoalCheck): { solved: boolean; statuses: { met: boolean; label: string; detail: string }[] } {
+  const results = checkGoal(goal, state);
+  return {
+    solved: results.every((r) => r.ok),
+    statuses: results.map((r) => ({ met: r.ok, label: r.label, detail: r.detail })),
+  };
+}
+
 function flatten(goal: GoalCheck): GoalCheck[] {
   if (goal.kind === 'allOf') return goal.checks.flatMap(flatten);
   return [goal];

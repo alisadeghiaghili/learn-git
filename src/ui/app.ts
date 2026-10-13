@@ -1,504 +1,1154 @@
-/** App shell — toolbar, board, terminal, goal dock, levels panel. */
+import type { LevelDef, RepoState } from '../engine/types';
+import { cloneState, sandboxState } from '../engine/state';
+import { commandCountsForGolf, execCommand, type ExecContext } from '../engine/commands';
+import { checkGoal, evaluateGoal, goalSatisfied } from '../engine/compare';
+import { solutionComplete, solutionProgress } from '../engine/solution';
+import { coachLine, nextSteps, whyFor, formatWhy } from '../engine/coach';
+import { allLevels, getNextLevel, seriesOf, curriculumOutcomes } from '../levels';
+import { renderBoardHtml } from './board';
+import { TerminalView, type LogLine } from './terminal';
+import { renderMarkdown, showModal } from './dialog';
+import { buildShareTargets, COFFEE_URL, REPO_URL, shareWithClipboard } from './share';
+import { getLocale, localizeLevel, setLocale, ui, LOCALES } from '../i18n';
+import type { Locale } from '../i18n/types';
+import { launchConfetti, playFanfare } from './confetti';
+import { loadProgress, resumeLine, saveProgress, summarizeCurriculum } from './progress';
+import { formatUiHelpText, startUiTour, uiHelpModalHtml } from './ui-help';
+import { BASELINE_FALLBACK, getCachedVisitorCount, getVisitorCount } from './visitor-counter';
 
-import type { CommandResult, LevelDef, RepoState } from '../engine/types';
-import { cloneState, emptyState, sandboxState } from '../engine/state';
-import { execCommand, runCommands, type ExecContext } from '../engine/commands';
-import { checkGoal, goalSatisfied } from '../engine/compare';
-import { whyFor, formatWhy, FIELD_NOTES } from '../engine/coach';
-import { createBoard, type BoardHandles } from './board';
-import { createTerminal, type TerminalHandles } from './terminal';
-import { showModal, renderMarkdown } from './dialog';
-import { burstConfetti } from './confetti';
-import { loadProgress, markSolved, bestCount, isSolved } from './progress';
-import { buildSolutionStatus } from './ui-help';
-import { allLevels, seriesOrder } from '../levels';
-import { shortSha } from '../engine/hash';
-import { currentTip, isClean, stagedPaths, untrackedPaths, unstagedPaths } from '../engine/state';
-import { REPO_URL, COFFEE_URL } from './share';
-import { getLang, setLang, onLangChange, LANGS } from '../i18n/lang';
-import { ui } from '../i18n/ui';
-import { getLevelText } from '../i18n/levels';
-import { getTopic, allTopics } from '../learning';
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
 
-/** Localized series (section) names; English is identity. */
-const SERIES_NAMES: Record<'en' | 'fa' | 'de', Record<string, string>> = {
-  en: {},
-  fa: {
-    Basics: 'مبانی',
-    'Diff & Show': 'تفاوت و نمایش',
-    Branching: 'شاخه‌بندی',
-    Remotes: 'ریموت‌ها',
-    Undo: 'واگرد',
-    'History craft': 'ساخت تاریخچه',
-    'Field practice': 'تمرین عملی',
-  },
-  de: {
-    Basics: 'Basics',
-    'Diff & Show': 'Diff & Show',
-    Branching: 'Branching',
-    Remotes: 'Remotes',
-    Undo: 'Rückgängig',
-    'History craft': 'Historie',
-    'Field practice': 'Praxis',
-  },
-};
+/** Five equal-size dots; filled count = difficulty 1–5. */
+function renderDiffDots(difficulty: number): string {
+  const n = Math.max(0, Math.min(5, difficulty));
+  return Array.from({ length: 5 }, (_, i) => `<i class="diff-dot${i < n ? ' on' : ''}"></i>`).join('');
+}
 
 export class App {
   private root: HTMLElement;
   private state: RepoState;
-  private level?: LevelDef;
-  private startSnapshot!: RepoState;
+  private level: LevelDef | null = null;
+  private startSnapshot: RepoState;
+  private golf: string[] = [];
+  private log: LogLine[] = [];
+  private solvedFlash = false;
+  private progress = loadProgress();
+  private terminal!: TerminalView;
+  private boardEl!: HTMLElement;
+  private dockEl!: HTMLElement;
+  private titleEl!: HTMLElement;
   private undoStack: RepoState[] = [];
-  private board!: BoardHandles;
-  private term!: TerminalHandles;
-  private dock!: HTMLElement;
-  private levelNameEl!: HTMLElement;
-  private solved = false;
-  private commandCount = 0;
+  private lastWasMeta = false;
+  private lastWasSolution = false;
+  private cachedVisitorCount: number | null = null;
+  private helpReopenTimer: number | null = null;
+  private offered = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
     this.state = sandboxState();
-    this.renderShell();
-    onLangChange(() => this.onLanguageChange());
-    this.term.print('LearnGit — teaching simulator (not a real git binary)', 'meta');
-    this.term.print('Type `help` for commands, or open Levels to start a drill.', 'meta');
-    this.term.print('');
-    this.refresh();
-    this.term.focus();
-  }
-
-  /** Re-render all localized chrome when the language switches. */
-  private onLanguageChange(): void {
-    this.term.print('', 'meta');
-    this.refresh();
-    if (this.level) this.showLevelIntro(this.level);
-  }
-
-  /** Localized text for the current level (falls back to English inline). */
-  private levelText() {
-    return getLevelText(this.level!, getLang());
-  }
-
-  /** Localized series name (English identity fallback). */
-  private seriesName(name: string): string {
-    return SERIES_NAMES[getLang()][name] ?? name;
-  }
-
-  /** Localized short label for a goal-check kind, falling back to English. */
-  private goalLabel(kind: string): string {
-    return ui(getLang()).goalLabels[kind] ?? kind;
-  }
-
-  /** Open the from-zero knowledge library. */
-  private openLearn(): void {
-    const S = ui(getLang());
-    let body = `<p>${escapeHtml(S.learn.subtitle)}</p><div class="level-list">`;
-    for (const t of allTopics(getLang())) {
-      body += `<button type="button" class="level-row" data-topic="${escapeHtml(t.id)}"><span class="name">${escapeHtml(t.title)}</span></button>`;
-    }
-    body += `</div>`;
-    const modal = showModal({
-      title: S.learn.title,
-      bodyHtml: body,
-      actions: [{ label: S.modal.close, className: 'ghost', onClick: () => this.term.focus() }],
-      onClose: () => this.term.focus(),
-    });
-    modal.el.querySelectorAll('[data-topic]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = (el as HTMLElement).dataset.topic;
-        modal.close();
-        if (id) this.openTopic(id);
-      });
-    });
-  }
-
-  /** Open the full from-zero / mindset / industry explanation for one topic. */
-  private openTopic(id: string): void {
-    const t = getTopic(id, getLang());
-    if (!t) {
-      this.term.print(`unknown topic "${id}"`, 'err');
-      return;
-    }
-    const S = ui(getLang());
-    const md = [
-      `**${t.title}**`,
-      '',
-      `## ${S.learn.fromZero}`,
-      ...t.fromZero.map((s) => `- **${s.level}** — ${s.body}`),
-      '',
-      `## ${S.learn.mindset}`,
-      t.mindset,
-      '',
-      `## ${S.learn.industry}`,
-      ...t.industry.map((n) => `- ${n}`),
-    ].join('\n');
-    showModal({
-      title: t.title,
-      bodyHtml: renderMarkdown(md),
-      actions: [{ label: S.modal.close, className: 'primary', onClick: () => this.term.focus() }],
-      onClose: () => this.term.focus(),
-    });
-  }
-
-  /** Show the level's localized intro dialog. */
-  private showLevelIntro(level: LevelDef): void {
-    const S = ui(getLang());
-    const lt = getLevelText(level, getLang());
-    if (!lt.startDialog.length) return;
-    const md = lt.startDialog.map((s) => `### ${s.title ?? lt.name}\n\n${s.markdown}`).join('\n\n');
-    showModal({
-      title: lt.name,
-      bodyHtml: renderMarkdown(md),
-      actions: [{ label: S.modal.start, className: 'primary', onClick: () => this.term.focus() }],
-      onClose: () => this.term.focus(),
-    });
-  }
-
-  private renderShell(): void {
-    this.root.innerHTML = '';
-
-    const S = ui(getLang());
-    const toolbar = document.createElement('div');
-    toolbar.className = 'toolbar';
-    toolbar.innerHTML = `
-      <div class="brand">Learn<span>Git</span></div>
-      <div class="level-name"></div>
-      <span class="lang-switch" role="group" aria-label="Language">
-        ${LANGS.map((l) => `<button type="button" data-lang="${l}" class="lang-btn${l === getLang() ? ' active' : ''}">${l.toUpperCase()}</button>`).join('')}
-      </span>
-      <button data-action="learn" type="button">${S.toolbar.learn}</button>
-      <button data-action="levels" type="button">${S.toolbar.levels}</button>
-      <button data-action="goal" type="button">${S.toolbar.goal}</button>
-      <button data-action="hint" type="button">${S.toolbar.hint}</button>
-      <button data-action="solution" type="button">${S.toolbar.solution}</button>
-      <button data-action="undo" type="button">${S.toolbar.undo}</button>
-      <button data-action="reset" type="button">${S.toolbar.reset}</button>
-      <button data-action="sandbox" type="button">${S.toolbar.sandbox}</button>
-      <a href="${REPO_URL}" target="_blank" rel="noopener noreferrer">${S.toolbar.github}</a>
-      <a class="support" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${S.toolbar.coffee}</a>
-    `;
-    this.root.appendChild(toolbar);
-    this.levelNameEl = toolbar.querySelector('.level-name') as HTMLElement;
-
-    toolbar.querySelectorAll('[data-lang]').forEach((el) => {
-      el.addEventListener('click', () => setLang((el as HTMLElement).dataset.lang as 'en' | 'fa' | 'de'));
-    });
-    toolbar.querySelector('[data-action="learn"]')!.addEventListener('click', () => this.openLearn());
-    toolbar.querySelector('[data-action="levels"]')!.addEventListener('click', () => this.openLevels());
-    toolbar.querySelector('[data-action="goal"]')!.addEventListener('click', () => {
-      this.dock.classList.toggle('hidden');
-      this.dock.style.display = this.dock.style.display === 'none' ? '' : this.dock.style.display === '' ? 'none' : '';
-    });
-    toolbar.querySelector('[data-action="hint"]')!.addEventListener('click', () => {
-      this.term.print(this.level ? this.levelText().hint : ui(getLang()).dock.sandboxHint, 'meta');
-    });
-    toolbar.querySelector('[data-action="solution"]')!.addEventListener('click', () => {
-      const sol = this.level?.solution ?? [];
-      this.term.print(sol.length ? sol.join('\n') : 'No solution in sandbox.', 'meta');
-    });
-    toolbar.querySelector('[data-action="undo"]')!.addEventListener('click', () => this.undo());
-    toolbar.querySelector('[data-action="reset"]')!.addEventListener('click', () => this.resetLevel());
-    toolbar.querySelector('[data-action="sandbox"]')!.addEventListener('click', () => this.enterSandbox());
-
-    const mainWrap = document.createElement('div');
-    mainWrap.style.display = 'flex';
-    mainWrap.style.flexDirection = 'column';
-    mainWrap.style.flex = '1';
-    mainWrap.style.minHeight = '0';
-    this.root.appendChild(mainWrap);
-
-    this.board = createBoard(mainWrap, () => ui(getLang()).board);
-
-    const main = document.createElement('div');
-    main.className = 'main';
-    mainWrap.appendChild(main);
-
-    this.term = createTerminal(main, (line) => this.handleLine(line));
-
-    this.dock = document.createElement('aside');
-    this.dock.className = 'dock';
-    main.appendChild(this.dock);
-
     this.startSnapshot = cloneState(this.state);
-  }
-
-  private handleLine(raw: string): void {
-    const lower = raw.trim().toLowerCase();
-    if (lower === 'levels' || lower === 'level') {
-      this.term.print(`learngit › ${raw}`, 'cmd');
-      this.openLevels();
-      return;
-    }
-    if (this.level && isSolved(this.level.id)) {
-      // still allow commands after solve
-    }
-    const lt = this.level ? this.levelText() : undefined;
-    const ctx: ExecContext = {
-      state: this.state,
-      levelId: this.level?.id,
-      goalText: this.level && lt
-        ? `${lt.objective}\n\nChecks:\n${checkGoal(this.level.goal, this.state)
-            .map((c) => `${c.ok ? '[x]' : '[ ]'} ${this.goalLabel(c.kind)} — ${c.detail}`)
-            .join('\n')}`
-        : undefined,
-      solution: this.level?.solution,
-      hint: lt?.hint,
-      lesson: lt ? lt.startDialog.map((s) => `### ${s.title ?? lt.name}\n\n${s.markdown}`).join('\n\n') : undefined,
-    };
-
-    this.undoStack.push(cloneState(this.state));
-    if (this.undoStack.length > 40) this.undoStack.shift();
-
-    const result = execCommand(raw, ctx);
-    if (result.ok) {
-      this.term.print(result.output, 'out');
-      const why = whyFor(raw.trim());
-      if (why && (raw.includes('add') || raw.includes('commit') || raw.includes('merge') || raw.includes('rebase') || raw.includes('reset') || raw.includes('revert') || raw.includes('push') || raw.includes('stash') || raw.includes('tag') || raw.includes('switch'))) {
-        this.term.print(formatWhy(why), 'why');
-      }
+    this.mount();
+    this.renderAll();
+    this.initVisitorCounter();
+    this.pushMeta(ui().appWelcome);
+    const summary = summarizeCurriculum(this.progress);
+    if (summary.solvedCount > 0) {
+      this.pushOut('');
+      this.pushOut(resumeLine(summary));
     } else {
-      this.term.print(result.error ?? 'error', 'err');
+      this.pushMeta(ui().sandboxSeeded);
+      this.pushMeta(ui().progressSaved);
     }
-
-    this.commandCount++;
-    this.refresh(result.effect);
-    this.checkSolved();
   }
 
-  private checkSolved(): void {
-    if (!this.level || this.solved) return;
-    if (goalSatisfied(this.level.goal, this.state)) {
-      this.solved = true;
-      markSolved(this.level.id, this.commandCount);
-      burstConfetti();
-      const S = ui(getLang());
-      const lt = this.levelText();
-      const best = bestCount(this.level.id);
-      this.term.print(`\n✓ ${S.modal.solvedTitle}: ${lt.name} (${this.commandCount} · par ${this.level.par})`, 'ok');
-      showModal({
-        title: S.modal.solvedTitle,
-        bodyHtml: renderMarkdown(
-          [
-            `**${lt.name}**`,
-            '',
-            `${S.dock.commandsUsed(this.commandCount)} · ${S.levels.par(this.level.par)}${best != null ? ` · ${S.levels.best(best)}` : ''}`,
-            '',
-            ...(lt.fieldNotes?.length ? [`**${S.dock.fieldNotes}**`, ...lt.fieldNotes.map((n) => `- ${n}`)] : []),
-          ].join('\n'),
-        ),
-        actions: [
-          { label: S.modal.stay, className: 'ghost', onClick: () => this.refresh() },
-          { label: S.modal.next, className: 'primary', onClick: () => this.nextLevel() },
-        ],
+  private mount(): void {
+    const u = ui();
+    const current = getLocale();
+    const langItems = LOCALES.map(
+      (loc) =>
+        `<button type="button" class="lang-option${current === loc ? ' on' : ''}" data-lang="${loc}" role="menuitem" aria-checked="${current === loc}">${loc.toUpperCase()}</button>`,
+    ).join('');
+    this.root.innerHTML = `
+      <div class="app-main">
+        <header class="toolbar">
+          <div class="brand" data-help-id="brand">Learn<span>Git</span></div>
+          <div class="level-title" id="level-title" data-help-id="level-title"></div>
+          <div class="toolbar-actions" data-help-id="toolbar">
+            <div class="lang-menu">
+              <button type="button" class="lang-btn" data-action="lang-toggle" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(u.language)}">
+                <span data-lang-label>${current.toUpperCase()}</span>
+                <span class="lang-caret" aria-hidden="true">&#9662;</span>
+              </button>
+              <div class="lang-dropdown" id="lang-dropdown" role="menu" hidden>
+                ${langItems}
+              </div>
+            </div>
+            <button type="button" class="nav-toggle" data-action="nav-toggle" aria-label="${escapeHtml(u.menuLabel)}" aria-expanded="false" aria-controls="nav-drawer">
+              <span class="nav-bars" aria-hidden="true"></span>
+            </button>
+            <div class="nav-drawer" id="nav-drawer" hidden>
+              <button type="button" data-action="why">Why Git?</button>
+              <button type="button" data-action="levels">${escapeHtml(u.levels)}</button>
+              <button type="button" data-action="lesson" title="${escapeHtml(u.lessonTitle)}">${escapeHtml(u.lesson)}</button>
+              <button type="button" data-action="goal">${escapeHtml(u.guide)}</button>
+              <button type="button" data-action="hint">${escapeHtml(u.hint)}</button>
+              <button type="button" data-action="solution">${escapeHtml(u.solution)}</button>
+              <button type="button" data-action="undo">${escapeHtml(u.undo)}</button>
+              <button type="button" data-action="reset">${escapeHtml(u.reset)}</button>
+              <button type="button" data-action="sandbox" class="ghost">${escapeHtml(u.sandboxBtn)}</button>
+              <button type="button" class="help-btn" data-action="help" title="${escapeHtml(u.uiGuideTitle)}" aria-label="${escapeHtml(u.help)}">?</button>
+            </div>
+            <span class="tb-stat visitors" id="visitor-stat" data-help-id="links" title="${escapeHtml(u.visitorsTitle)}" hidden>
+              <svg class="visitor-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0-2.21-2.69-4-6-4s-6 1.79-6 4v1h12v-1zm-1.07 0H3.07C3.56 11.83 5.48 11 8 11s4.44.83 4.93 2z"/></svg>
+              <span class="visitor-count" id="visitor-count"></span>
+            </span>
+            <a class="tb-link gh" data-help-id="links" href="${REPO_URL}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(u.githubTitle)}" aria-label="GitHub repository"><svg class="gh-mark" viewBox="0 0 16 16" aria-hidden="true" width="18" height="18"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+            <a class="tb-link support" data-help-id="links" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(u.supportTitle)}">${escapeHtml(u.support)}</a>
+          </div>
+        </header>
+        <div class="board-wrap" id="board-wrap"></div>
+        <div class="terminal" id="terminal" data-help-id="term-log"></div>
+      </div>
+      <aside class="dock" id="dock" data-help-id="dock" aria-label="${escapeHtml(u.guidePanel)}"></aside>
+    `;
+    this.boardEl = this.root.querySelector('#board-wrap')!;
+    this.dockEl = this.root.querySelector('#dock')!;
+    this.titleEl = this.root.querySelector('#level-title')!;
+    this.terminal = new TerminalView(this.root.querySelector('#terminal')!, (cmd) =>
+      this.handleCommand(cmd),
+    );
+    this.root.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        if (action === 'nav-toggle') {
+          this.toggleNav();
+          return;
+        }
+        if (action === 'lang-toggle') {
+          this.toggleLang();
+          return;
+        }
+        this.closeNav();
+        this.closeLang();
+        if (action === 'why') this.showWhyGit();
+        if (action === 'levels') this.openLevels();
+        if (action === 'goal') this.focusGuide();
+        if (action === 'hint') this.handleCommand('hint');
+        if (action === 'solution') this.handleCommand('show solution');
+        if (action === 'undo') this.handleCommand('undo');
+        if (action === 'reset') this.handleCommand('reset');
+        if (action === 'sandbox') this.handleCommand('sandbox');
+        if (action === 'help') this.openUiHelp(true);
+        if (action === 'lesson') this.replayLesson();
+        this.terminal.focus();
       });
-      this.refresh();
+    });
+    this.root.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const loc = btn.dataset.lang as Locale | undefined;
+        if (!loc || loc === getLocale()) {
+          this.closeLang();
+          return;
+        }
+        setLocale(loc);
+        this.remountAfterLocale();
+      });
+    });
+  }
+
+  private toggleNav(): void {
+    const drawer = this.root.querySelector<HTMLElement>('#nav-drawer');
+    const btn = this.root.querySelector<HTMLButtonElement>('[data-action="nav-toggle"]');
+    if (!drawer || !btn) return;
+    const open = drawer.classList.toggle('is-open');
+    drawer.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) this.closeLang();
+  }
+
+  private closeNav(): void {
+    const drawer = this.root.querySelector<HTMLElement>('#nav-drawer');
+    const btn = this.root.querySelector<HTMLButtonElement>('[data-action="nav-toggle"]');
+    if (!drawer || !btn) return;
+    drawer.classList.remove('is-open');
+    drawer.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  }
+
+  private toggleLang(): void {
+    const menu = this.root.querySelector<HTMLElement>('#lang-dropdown');
+    const btn = this.root.querySelector<HTMLButtonElement>('[data-action="lang-toggle"]');
+    if (!menu || !btn) return;
+    const open = menu.classList.toggle('is-open');
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) this.closeNav();
+  }
+
+  private closeLang(): void {
+    const menu = this.root.querySelector<HTMLElement>('#lang-dropdown');
+    const btn = this.root.querySelector<HTMLButtonElement>('[data-action="lang-toggle"]');
+    if (!menu || !btn) return;
+    menu.classList.remove('is-open');
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  }
+
+  private remountAfterLocale(): void {
+    const levelId = this.level?.id ?? null;
+    this.mount();
+    if (levelId) {
+      const raw = allLevels.find((l) => l.id === levelId);
+      if (raw) this.level = localizeLevel(raw);
     }
-  }
-
-  private nextLevel(): void {
-    const idx = allLevels.findIndex((l) => l.id === this.level?.id);
-    const next = allLevels[idx + 1];
-    if (next) this.loadLevel(next);
-    else this.enterSandbox();
-  }
-
-  private undo(): void {
-    const prev = this.undoStack.pop();
-    if (!prev) {
-      this.term.print('nothing to undo', 'meta');
-      return;
-    }
-    this.state = prev;
-    this.term.print('undid last command', 'meta');
-    this.refresh();
-  }
-
-  private resetLevel(): void {
-    if (!this.level) {
-      this.state = sandboxState();
-      this.startSnapshot = cloneState(this.state);
-      this.undoStack = [];
-      this.commandCount = 0;
-      this.term.print('sandbox reset', 'meta');
-      this.refresh();
-      return;
-    }
-    this.state = cloneState(this.startSnapshot);
-    this.undoStack = [];
-    this.commandCount = 0;
-    this.solved = false;
-    this.term.print('level reset', 'meta');
-    this.refresh();
-  }
-
-  private enterSandbox(): void {
-    this.level = undefined;
-    this.state = sandboxState();
-    this.startSnapshot = cloneState(this.state);
-    this.undoStack = [];
-    this.commandCount = 0;
-    this.solved = false;
-    this.term.print('entered sandbox', 'meta');
-    this.refresh();
-  }
-
-  private openLevels(): void {
-    const S = ui(getLang());
-    const progress = loadProgress();
-    let body = `<p>${escapeHtml(S.levels.subtitle)}</p>`;
-    for (const series of seriesOrder) {
-      const items = allLevels.filter((l) => l.series === series);
-      if (!items.length) continue;
-      body += `<div class="series-block"><h3>${escapeHtml(this.seriesName(series))}</h3><div class="level-list">`;
-      for (const l of items) {
-        const solved = !!progress[l.id]?.solved;
-        const best = progress[l.id]?.bestCommands;
-        const ltext = getLevelText(l, getLang());
-        body += `
-          <button type="button" class="level-row${this.level?.id === l.id ? ' active' : ''}${solved ? ' solved' : ''}" data-level="${l.id}">
-            <span class="name">${escapeHtml(ltext.name)}</span>
-            <span class="par-note">${escapeHtml(S.levels.par(l.par))}${best != null ? ` · ${escapeHtml(S.levels.best(best))}` : ''}</span>
-            <span class="chip ${solved ? 'ok' : ''}">${solved ? escapeHtml(S.levels.solved) : '★'.repeat(l.difficulty) + '☆'.repeat(5 - l.difficulty)}</span>
-          </button>`;
+    this.log = [];
+    if (this.level) {
+      this.pushMeta(ui().levelMeta(this.level.id, this.level.name));
+      this.pushOut(this.level.objective);
+      const coach = coachLine(this.state, this.level);
+      if (coach) this.pushMeta(coach);
+    } else {
+      this.pushMeta(ui().appWelcome);
+      const summary = summarizeCurriculum(this.progress);
+      if (summary.solvedCount > 0) {
+        this.pushOut('');
+        this.pushOut(resumeLine(summary));
+      } else {
+        this.pushMeta(ui().sandboxSeeded);
+        this.pushMeta(ui().progressSaved);
       }
-      body += `</div></div>`;
     }
+    this.renderAll();
+    this.renderVisitorBadge();
+    this.terminal.focus();
+  }
 
+  private async initVisitorCounter(): Promise<void> {
+    this.cachedVisitorCount = getCachedVisitorCount() ?? BASELINE_FALLBACK;
+    this.renderVisitorBadge();
+    const count = await getVisitorCount();
+    if (count !== null && count !== this.cachedVisitorCount) {
+      this.cachedVisitorCount = count;
+      this.renderVisitorBadge();
+    }
+  }
+
+  private renderVisitorBadge(): void {
+    if (this.cachedVisitorCount === null) return;
+    const statEl = this.root.querySelector<HTMLElement>('#visitor-stat');
+    const countEl = this.root.querySelector<HTMLElement>('#visitor-count');
+    if (!statEl || !countEl) return;
+
+    const u = ui();
+    statEl.title = u.visitorsTitle;
+    countEl.textContent = this.cachedVisitorCount.toLocaleString('en-US');
+    statEl.hidden = false;
+  }
+
+  private focusGuide(): void {
+    this.dockEl.classList.remove('dock-pulse');
+    void this.dockEl.offsetWidth;
+    this.dockEl.classList.add('dock-pulse');
+    this.dockEl.scrollTop = 0;
+  }
+
+  private openUiHelp(runTour = false): void {
+    if (runTour) startUiTour(this.root);
     const modal = showModal({
-      title: S.levels.title,
-      bodyHtml: body,
-      actions: [{ label: S.modal.close, className: 'ghost', onClick: () => this.term.focus() }],
-      onClose: () => this.term.focus(),
+      title: ui().uiGuideTitle,
+      bodyHtml: uiHelpModalHtml(),
+      actions: [{ label: ui().close, className: 'ghost', onClick: () => modal.close() }],
+      onClose: () => {
+        if (this.helpReopenTimer !== null) {
+          window.clearTimeout(this.helpReopenTimer);
+          this.helpReopenTimer = null;
+        }
+        this.terminal.focus();
+      },
     });
-
-    modal.el.querySelectorAll('[data-level]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = (el as HTMLElement).dataset.level;
-        const lvl = allLevels.find((l) => l.id === id);
+    modal.el.querySelectorAll<HTMLButtonElement>('[data-focus-id]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.focusId;
+        if (!id) return;
         modal.close();
-        if (lvl) this.loadLevel(lvl);
+        startUiTour(this.root, id, 3000);
+        if (this.helpReopenTimer !== null) window.clearTimeout(this.helpReopenTimer);
+        this.helpReopenTimer = window.setTimeout(() => {
+          this.helpReopenTimer = null;
+          this.openUiHelp(false);
+        }, 3000);
       });
     });
   }
 
-  private loadLevel(level: LevelDef): void {
-    this.level = level;
-    this.state = cloneState(level.startState);
-    this.startSnapshot = cloneState(level.startState);
-    this.undoStack = [];
-    this.commandCount = 0;
-    this.solved = false;
-    const lt = getLevelText(level, getLang());
-    this.term.print(`\n── ${this.seriesName(level.series)} · ${lt.name} ──`, 'meta');
-    this.term.print(lt.objective, 'meta');
-    this.showLevelIntro(level);
-    this.refresh();
+  private pushMeta(text: string): void {
+    this.log.push({ kind: 'meta', text });
+    this.terminal.setLog(this.log);
   }
 
-  private refresh(effect?: string): void {
-    this.board.update(this.state);
-    if (effect) this.board.flash(effect);
-    this.levelNameEl.textContent = this.level
-      ? `${this.seriesName(this.level.series)} · ${this.levelText().name}`
-      : ui(getLang()).dock.sandbox;
+  private pushOut(text: string): void {
+    if (!text) return;
+    this.log.push({ kind: 'out', text });
+    this.terminal.setLog(this.log);
+  }
+
+  private pushErr(text: string): void {
+    this.log.push({ kind: 'err', text });
+    this.terminal.setLog(this.log);
+  }
+
+  private renderAll(): void {
+    this.boardEl.innerHTML = renderBoardHtml(this.state);
+    this.titleEl.textContent = this.level
+      ? ui().titleLine(this.level.id, this.level.name, this.level.par)
+      : ui().sandboxTitle;
     this.renderDock();
+    this.syncTerminalHints();
+    this.dockEl.hidden = false;
+  }
+
+  private syncTerminalHints(): void {
+    if (!this.level) {
+      this.terminal.setHint('git status');
+      this.terminal.setExtraCompletions([]);
+      return;
+    }
+    const steps = solutionProgress(this.state, this.level.solution);
+    const next = steps.find((s) => !s.done && !s.optional);
+    this.terminal.setHint(next?.command ?? null);
+    this.terminal.setExtraCompletions([
+      ...this.level.solution,
+      ...this.level.hint.split(';').map((s) => s.trim()).filter(Boolean),
+    ]);
   }
 
   private renderDock(): void {
-    const S = ui(getLang());
-    const level = this.level;
-    if (!level) {
-      this.dock.innerHTML = `
-        <h3>${escapeHtml(S.dock.sandbox)}</h3>
-        <div class="objective">${renderMarkdown(S.dock.sandboxHint)}</div>
-        <div class="field-notes">${FIELD_NOTES.slice(0, 3).map((n) => `• ${escapeHtml(n)}`).join('<br>')}</div>
-        <h3>${escapeHtml(S.dock.liveStatus)}</h3>
-        <div class="check-list">
-          ${this.liveStatusHtml()}
+    if (!this.level) {
+      this.dockEl.innerHTML = `
+        <h2>${escapeHtml(ui().learningGuide)}</h2>
+        <p class="objective">${escapeHtml(ui().guideAlwaysOn)}</p>
+        <div class="learning-box">
+          <div class="next-title">${escapeHtml(ui().startHere)}</div>
+          <ul>
+            ${ui()
+              .startHereItems.map((item) => `<li>${renderMarkdown(item)}</li>`)
+              .join('')}
+          </ul>
         </div>
+        <div class="learning-box">
+          <div class="next-title">${escapeHtml(ui().sandboxTip)}</div>
+          <ul>
+            ${ui()
+              .sandboxTipItems.map((item) => `<li>${escapeHtml(item)}</li>`)
+              .join('')}
+          </ul>
+        </div>
+        <ul class="goal-list">
+          <li class="met"><div class="g-label">${escapeHtml(ui().noActiveLevel)}</div><div class="g-detail">${escapeHtml(ui().noActiveLevelDetail)}</div></li>
+        </ul>
+        <div class="par-note">${ui().guideFlashNote}</div>
       `;
       return;
     }
-
-    const lt = getLevelText(level, getLang());
-    const checks = checkGoal(level.goal, this.state);
-    const steps = buildSolutionStatus(level.solution, this.state.commandHistory);
-    const best = bestCount(level.id);
-
-    this.dock.innerHTML = `
-      ${this.solved ? `<div class="solved-banner">${escapeHtml(S.dock.solvedBanner(this.commandCount, best ?? undefined))}</div>` : ''}
-      <h3>${escapeHtml(S.dock.objective)}</h3>
-      <div class="objective">${escapeHtml(lt.objective)}</div>
-      <h3>${escapeHtml(S.dock.learning)}</h3>
-      <div class="learning-list">${lt.startDialog.length ? this.learningChipsHtml(level.learning) : ''}</div>
-      <h3>${escapeHtml(S.dock.goalChecks)}</h3>
-      <div class="check-list">
-        ${checks
-          .map(
-            (c) =>
-              `<div class="check-item ${c.ok ? 'ok' : 'fail'}"><span class="mark">${c.ok ? '✓' : '○'}</span><span><strong>${escapeHtml(this.goalLabel(c.kind))}</strong><br><span style="color:var(--haze)">${escapeHtml(c.detail)}</span></span></div>`,
-          )
-          .join('')}
-      </div>
-      <h3>${escapeHtml(S.dock.parLine(level.par, level.difficulty))}</h3>
-      <div class="par-line">${escapeHtml(S.dock.commandsUsed(this.commandCount))}</div>
-      <h3>${escapeHtml(S.dock.solutionSteps)}</h3>
-      <div class="check-list">
-        ${steps
-          .map(
-            (s) =>
-              `<div class="check-item ${s.done ? 'ok' : 'fail'}"><span class="mark">${s.done ? '✓' : '○'}</span><span><code style="font-family:var(--font-mono);font-size:11px">${escapeHtml(s.command)}</code><br><span style="color:var(--haze)">${escapeHtml(s.optional ? S.dock.optional : S.dock.required)}</span></span></div>`,
-          )
-          .join('')}
-      </div>
+    const level = this.level;
+    const steps = solutionProgress(this.state, level.solution);
+    const solved = solutionComplete(this.state, level.solution);
+    const { statuses } = evaluateGoal(this.state, level.goal);
+    const currentId = steps.findIndex((s) => !s.done && !s.optional);
+    const items = steps.map((s, i) => {
+      const isCurrent = !solved && !s.done && !s.optional && i === currentId;
+      return `<li class="${s.done ? 'met' : ''}${s.optional ? ' optional' : ''}${isCurrent ? ' current' : ''}">
+        <div class="g-label" dir="ltr">${s.done ? '✓' : isCurrent ? '▶' : '○'} <code>${escapeHtml(s.command)}</code>${
+          s.optional ? ` <span class="chip">${escapeHtml(ui().optionalChip)}</span>` : ''
+        }${isCurrent ? ` <span class="chip current-chip">${escapeHtml(ui().nowChip)}</span>` : ''}</div>
+        <div class="g-detail" dir="ltr">${escapeHtml(s.note)}</div>
+      </li>`;
+    });
+    const remaining = nextSteps(this.state, level.goal, level);
+    const firstNext = remaining[0]?.command;
+    const nextBlock = solved
+      ? `<div class="next-box met">${escapeHtml(ui().allSolutionMet)}</div>`
+      : `<div class="next-box">
+            <div class="next-title">${escapeHtml(ui().typeNextTitle)}</div>
+            <div class="next-row"><span class="g-label">${escapeHtml(ui().remainingLabel)}</span>${
+              firstNext ? `<code class="g-cmd">${escapeHtml(firstNext)}</code>` : ''
+            }</div>
+            <div class="par-note">${escapeHtml(ui().wrongCommandNote)}</div>
+          </div>`;
+    const extra = statuses.filter((s) => !s.met);
+    const prog = this.progress[level.id];
+    const golfNote =
+      prog?.bestCommands !== undefined
+        ? ui().bestSoFar(prog.bestCommands, level.par)
+        : ui().idealSolution(level.par);
+    this.dockEl.innerHTML = `
+      <h2>${escapeHtml(level.name)}</h2>
+      <p class="objective">${escapeHtml(level.objective)}</p>
       ${
-        lt.fieldNotes?.length
-          ? `<h3>${escapeHtml(S.dock.fieldNotes)}</h3><div class="field-notes">${lt.fieldNotes.map((n) => escapeHtml(n)).join('<br><br>')}</div>`
+        level.learning?.length
+          ? `<div class="learning-box">
+              <div class="next-title">${escapeHtml(ui().youAreLearning)}</div>
+              <ul>${level.learning.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+            </div>`
           : ''
       }
+      ${
+        level.fieldNotes?.length
+          ? `<div class="field-box">
+              <div class="next-title">${escapeHtml(ui().fieldNotesTitle)}</div>
+              <ul>${level.fieldNotes.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+            </div>`
+          : ''
+      }
+      <div class="par-note">${escapeHtml(golfNote)}</div>
+      ${this.solvedFlash ? `<div class="solved-banner">${escapeHtml(ui().solvedBanner(this.golf.length || null))}</div>` : ''}
+      ${nextBlock}
+      <ul class="goal-list">${items.join('')}</ul>
+      ${extra.length && !solved ? `<div class="par-note">${escapeHtml(ui().stateNotes)} ${extra.map((s) => escapeHtml(s.label)).join(' · ')}</div>` : ''}
     `;
-    // Make each "you are learning" chip open its from-zero topic.
-    this.dock.querySelectorAll('[data-topic]').forEach((el) => {
-      el.addEventListener('click', () => this.openTopic((el as HTMLElement).dataset.topic!));
+  }
+
+  private toggleGoal(force?: boolean): void {
+    void force;
+    this.dockEl.hidden = false;
+    this.renderAll();
+    this.focusGuide();
+    this.pushMeta(ui().guideAlwaysRight);
+  }
+
+  private openLevels(): void {
+    const series = seriesOf();
+    const body = series
+      .map((s) => {
+        const rows = s.levels
+          .map((l) => {
+            const p = this.progress[l.id];
+            return `<button type="button" class="level-row ${p?.solved ? 'solved' : ''}" data-level="${l.id}">
+              <span class="id">${l.id}</span>
+              <span class="name">${l.name}</span>
+              <span class="par-note">ideal ${l.par} cmd${l.par === 1 ? '' : 's'}</span>
+              <span class="chip ${p?.solved ? 'ok' : ''}" title="${escapeHtml(ui().difficultyOf(l.difficulty))}">
+                ${p?.solved ? `${escapeHtml(ui().solvedLabel)} ${p.bestCommands ?? ''}` : `<span class="diff-dots" aria-label="${escapeHtml(ui().difficultyOf(l.difficulty))}">${renderDiffDots(l.difficulty)}</span>`}
+              </span>
+            </button>`;
+          })
+          .join('');
+        return `<div class="series-block"><h3>${escapeHtml(s.title)}</h3><div class="level-list">${rows}</div></div>`;
+      })
+      .join('');
+
+    const modal = showModal({
+      title: ui().levelsTitle,
+      bodyHtml: `<p>${escapeHtml(ui().pickChallenge)}</p>
+        <div class="legend-box">
+          <div class="next-title">${escapeHtml(ui().howToRead)}</div>
+          <ul class="legend-list">
+            <li>
+              <span class="diff-dots" aria-hidden="true">${renderDiffDots(3)}</span>
+              ${renderMarkdown(ui().difficultyLegend)}
+            </li>
+            <li><span class="par-note">ideal 3 cmds</span> ${renderMarkdown(ui().idealLegend)}</li>
+            <li><span class="chip ok">${escapeHtml(ui().solvedLabel)} 3</span> ${renderMarkdown(ui().solvedLegend)}</li>
+          </ul>
+        </div>
+        ${body}`,
+      actions: [{ label: ui().close, className: 'ghost', onClick: () => modal.close() }],
+    });
+
+    modal.el.querySelectorAll('[data-level]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.level!;
+        modal.close();
+        this.startLevel(id);
+      });
     });
   }
 
-  /** Learning chips that show the localized topic title and open its lesson. */
-  private learningChipsHtml(learning: string[]): string {
-    return learning
-      .map((id) => {
-        const t = getTopic(id, getLang());
-        if (!t) return `<span class="chip">${escapeHtml(id)}</span>`;
-        return `<button type="button" class="chip chip-topic" data-topic="${escapeHtml(id)}" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</button>`;
-      })
-      .join('');
+  private startLevel(id: string): void {
+    const raw = allLevels.find((l) => l.id === id);
+    if (!raw) {
+      this.pushErr(ui().unknownLevel(id));
+      return;
+    }
+    const level = localizeLevel(raw);
+    this.level = level;
+    this.state = cloneState(level.startState);
+    this.startSnapshot = cloneState(level.startState);
+    this.golf = [];
+    this.undoStack = [];
+    this.solvedFlash = false;
+    this.log = [];
+    this.pushMeta(ui().levelMeta(level.id, level.name));
+    this.pushOut(level.objective);
+    const coach = coachLine(this.state, level);
+    if (coach) this.pushMeta(coach);
+    this.renderAll();
+    this.showIntro(level);
+    this.dockEl.hidden = false;
+    this.renderAll();
+    this.terminal.focus();
   }
 
-  private liveStatusHtml(): string {
-    const st = ui(getLang()).status;
-    const s = this.state;
-    const tip = s.hasCommits ? shortSha(currentTip(s)) : '—';
-    return [
-      row(st.branch, s.detachedHead ? `detached @ ${tip}` : s.HEAD),
-      row(st.head, tip),
-      row(st.clean, isClean(s) ? 'yes' : 'no'),
-      row(st.staged, stagedPaths(s).join(', ') || '—'),
-      row(st.unstaged, unstagedPaths(s).join(', ') || '—'),
-      row(st.untracked, untrackedPaths(s).join(', ') || '—'),
-      row(st.commits, String(s.commits.length)),
-      row(st.remotes, s.remotes.map((r) => r.name).join(', ') || '—'),
-    ].join('');
+  private replayLesson(): void {
+    if (this.level?.startDialog?.length) {
+      this.showIntro(this.level);
+      this.pushMeta(ui().lessonReplayed);
+      this.terminal.focus();
+      return;
+    }
+    showModal({
+      title: ui().aboutTitle,
+      bodyHtml: renderMarkdown(
+        [
+          ui().aboutPublished,
+          '',
+          ui().aboutBoard,
+          '',
+          ui().aboutOpenLevels,
+          '',
+          `- [GitHub](${REPO_URL})`,
+          '',
+          ui().aboutSupport,
+          `<a class="tb-link support" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${ui().support}</a>`,
+        ].join('\n'),
+      ),
+      actions: [{ label: ui().close, className: 'ghost', onClick: () => this.terminal.focus() }],
+      onClose: () => this.terminal.focus(),
+    });
+  }
 
-    function row(k: string, v: string): string {
-      return `<div class="check-item ok"><span class="mark">·</span><span><strong>${escapeHtml(k)}</strong>: ${escapeHtml(v)}</span></div>`;
+  private showIntro(level: LevelDef): void {
+    if (!level.startDialog.length) return;
+    let idx = 0;
+    const show = () => {
+      const slide = level.startDialog[idx];
+      const actions = [];
+      const modalRef: { close: () => void } = { close: () => undefined };
+      if (idx > 0) {
+        actions.push({
+          label: ui().back,
+          className: 'ghost',
+          onClick: () => {
+            idx -= 1;
+            modalRef.close();
+            show();
+          },
+        });
+      }
+      if (idx < level.startDialog.length - 1) {
+        actions.push({
+          label: ui().next,
+          className: 'primary',
+          onClick: () => {
+            idx += 1;
+            modalRef.close();
+            show();
+          },
+        });
+      } else {
+        actions.push({
+          label: ui().startLevel,
+          className: 'primary',
+          onClick: () => {
+            modalRef.close();
+            this.terminal.focus();
+          },
+        });
+      }
+      const m = showModal({
+        title: slide.title ?? ui().levelMeta(level.id, ''),
+        bodyHtml: renderMarkdown(slide.markdown),
+        actions,
+        onClose: () => this.terminal.focus(),
+      });
+      modalRef.close = m.close;
+    };
+    show();
+  }
+
+  private enterSandbox(): void {
+    this.level = null;
+    this.state = sandboxState();
+    this.startSnapshot = cloneState(this.state);
+    this.golf = [];
+    this.undoStack = [];
+    this.solvedFlash = false;
+    this.log = [];
+    this.pushMeta(ui().sandboxMode);
+    this.renderAll();
+    this.terminal.focus();
+  }
+
+  private resetLevel(): void {
+    this.state = cloneState(this.startSnapshot);
+    this.golf = [];
+    this.undoStack = [];
+    this.solvedFlash = false;
+    this.pushMeta(this.level ? ui().resetLevel(this.level.id) : ui().resetSandbox);
+    if (this.level) {
+      const coach = coachLine(this.state, this.level);
+      if (coach) this.pushMeta(coach);
+    }
+    this.renderAll();
+    this.terminal.focus();
+  }
+
+  private showSolution(): void {
+    if (!this.level) {
+      this.pushMeta(ui().noSolutionSandbox);
+      return;
+    }
+    const cmds = this.level.solution;
+    showModal({
+      title: ui().solutionTitle(this.level.id),
+      bodyHtml: renderMarkdown(
+        [
+          ui().solutionCommands,
+          '',
+          '```',
+          cmds.join('\n'),
+          '```',
+          '',
+          ui().solutionWarn,
+        ].join('\n'),
+      ),
+      actions: [
+        { label: ui().cancel, className: 'ghost', onClick: () => this.terminal.focus() },
+        {
+          label: ui().runSolution,
+          className: 'primary',
+          onClick: () => {
+            this.resetLevel();
+            for (const c of cmds) this.runCommand(c, { fromSolution: true });
+            this.terminal.focus();
+          },
+        },
+      ],
+    });
+  }
+
+  private showWhyGit(): void {
+    const loc = getLocale();
+    const isFa = loc === 'fa';
+    const isDe = loc === 'de';
+
+    const title = isFa ? 'چرا Git؟ (معماری، مفاهیم و قدرت مهندسی)' : isDe ? 'Warum Git? (Architektur und Konzepte)' : 'Why Git? Architectural Mental Models & Industry Power';
+
+    const bodyHtml = isFa ? `
+      <p class="modal-lead">چرا تمام دنیای نرم‌افزار به جای سیستم‌های متمرکز سنتی (مانند SVN و CVS) به Git تکیه می‌کند؟</p>
+      <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 12px; color: var(--text);">
+        گیت فقط یک ابزار کنترل نسخه نیست؛ یک <strong>سیستم فایل محتوا-محور بر پایه گراف جهت‌دار بدون دور (DAG)</strong> است.
+        لینوس توروالدز گیت را برای حل معضل هماهنگی هزاران مهندس بدون وابستگی به سرور مرکزی خلق کرد.
+      </div>
+
+      <div class="why-grid">
+        <div class="why-card">
+          <div class="why-card-title">🌐 ۱. معماری توزیع‌شده و گراف مستقل (DAG)</div>
+          <p class="why-card-body">هر کلون یک کپی کامل از کل تاریخچه پروژه است. عملیات‌های commit، log، diff و branch با سرعت رم محلی انجام می‌شوند و هیچ وابستگی به اتصال اینترنت یا شبکه ندارند.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">📸 ۲. اسنپ‌شات واقعی به جای ذخیره تفاضلی</div>
+          <p class="why-card-body">سیستم‌های قدیمی فقط تفاوت خطوط را ذخیره می‌کردند. گیت در هر کامیت یک درخت کامل از وضعیت تمام فایل‌ها (Snapshot) ذخیره می‌کند و فایل‌های بدون تغییر را اشتراک می‌گذارد.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🧱 ۳. معماری سه‌ناحیه‌ای (Working → Stage → Repo)</div>
+          <p class="why-card-body">وجود <strong>Index / Staging Area</strong> به شما قدرت جراحی دقیق می‌دهد: فایل‌های آماده را جداگانه بچینید، کامیت‌های شفاف و تک‌منظوره بسازید و کارهای ناتمام را از پکیج نهایی جدا کنید.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🌿 ۴. شاخه‌سازی (Branching) آنی و ارزان</div>
+          <p class="why-card-body">در گیت، شاخه صرفاً یک اشاره‌گر متنی ۴۱ بایتی به یک هش کامیت است. ایجاد، سوئیچ و ادغام شاخه‌ها در کسری از میلی‌ثانیه بدون تکثیر فایل‌ها اتفاق می‌افتد.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🔒 ۵. یکپارچگی رمزنگاری‌شده (Merkle Tree & SHA)</div>
+          <p class="why-card-body">تمام اشیای گیت با الگوریتم‌های هش رمزنگاری می‌شوند. تاریخچه گیت تغییرناپذیر است؛ هیچ فایلی خراب نمی‌شود و هیچ تغییری بدون شناسایی در هش گم نمی‌گردد.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🚀 ۶. ستون فقرات مهندسی و پایپ‌لاین‌های DevOps</div>
+          <p class="why-card-body">گیت زبان مشترک صنعت برای GitOps، استقرارهای خودکار CI/CD، بررسی کد (PR/MR) و هماهنگی میلیون‌ها مهندس نرم‌افزار در بزرگ‌ترین پروژه‌های جهان است.</p>
+        </div>
+      </div>
+
+      <div class="learning-box" style="margin-top: 14px;">
+        <div class="next-title">🎯 نتیجه‌گیری</div>
+        <p style="margin: 4px 0 0; font-size: 13px; line-height: 1.55; color: var(--text);">
+          تسلط بر گیت یعنی دستیابی به کنترل کامل روی زمان و فضا در توسعه نرم‌افزار. با شبیه‌ساز تصویری LearnGit این ساختار ذهنی را عمیقاً درک خواهید کرد.
+        </p>
+      </div>
+    ` : isDe ? `
+      <p class="modal-lead">Warum setzt die gesamte moderne Softwareentwicklung auf Git?</p>
+      <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 12px; color: var(--text);">
+        Git ist mehr als nur Versionskontrolle: Es ist ein <strong>inhaltsadressierbares Dateisystem auf Basis eines gerichteten azyklischen Graphen (DAG)</strong>.
+      </div>
+
+      <div class="why-grid">
+        <div class="why-card">
+          <div class="why-card-title">🌐 1. Verteilter gerichteter azyklischer Graph (DAG)</div>
+          <p class="why-card-body">Jeder Klon enthält das vollständige Repository samt Historie. Commits, Logs, Diffs und Branches laufen blitzschnell lokal ohne Netzwerkabhängigkeit.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">📸 2. Snapshots statt zeilenweiser Diffs</div>
+          <p class="why-card-body">Jeder Commit ist ein vollständiger Schnappschuss des gesamten Projektbaums mit effizientem Deduplizierungs-Mechanismus.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🧱 3. Die Drei-Zonen-Architektur (Arbeitsbereich → Index → Repository)</div>
+          <p class="why-card-body">Der Staging-Bereich (Index) ermöglicht atomare, saubere und präzise strukturierte Commits.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🌿 4. Leichtgewichtiges Branching & Merging</div>
+          <p class="why-card-body">Ein Branch ist lediglich ein 41-Byte-Pointer auf einen Commit-Hash. Zweige erstellen und wechseln dauert Bruchteile von Millisekunden.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🔒 5. Kryptografische Integrität (Merkle-Graph)</div>
+          <p class="why-card-body">Alle Objekte sind kryptografisch abgesichert. Manipulation oder Datenverlust werden mathematisch ausgeschlossen.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🚀 6. Industriestandard für CI/CD & DevOps</div>
+          <p class="why-card-body">Git bildet das globale Fundament für modernes Code-Review, Pull Requests und GitOps-Pipelines.</p>
+        </div>
+      </div>
+    ` : `
+      <p class="modal-lead">Why did the entire world of software engineering converge on Git?</p>
+      <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 12px; color: var(--text);">
+        Git is not merely a version tracking tool; it is a <strong>content-addressable object store structured as a Directed Acyclic Graph (DAG)</strong>.
+        Engineered by Linus Torvalds, it guarantees offline autonomy, snapshot consistency, and zero single points of failure.
+      </div>
+
+      <div class="why-grid">
+        <div class="why-card">
+          <div class="why-card-title">🌐 1. Fully Distributed Directed Acyclic Graph (DAG)</div>
+          <p class="why-card-body">Every clone is a full-fledged repository with complete project history. Commits, diffs, branches, and log operations occur at native RAM speed without internet reliance.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">📸 2. Real Snapshots, Not Fragile Diffs</div>
+          <p class="why-card-body">Legacy VCS saved delta-differences per file. Git saves a full cryptographic tree snapshot per commit, securely deduplicating unchanged blobs across time.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🧱 3. Three-Zone Safety: Working Tree → Staging (Index) → Repository</div>
+          <p class="why-card-body">The Staging Area acts as a precision staging runway. Craft clean, atomic, reviewable commits rather than dumping raw dirty files into history.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🌿 4. Instant, Frictionless Branching & Merging</div>
+          <p class="why-card-body">Branches are not heavy directory copies; they are 41-byte pointer references. Branch creation, switching, and merging take mere milliseconds.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🔒 5. Cryptographic Merkle-Tree Integrity</div>
+          <p class="why-card-body">Every object is identified by a secure cryptographic hash. History is tamper-evident; silent corruption or malicious alterations are mathematically detectable.</p>
+        </div>
+
+        <div class="why-card">
+          <div class="why-card-title">🚀 6. Enterprise Standard for DevOps & Collaboration</div>
+          <p class="why-card-body">From Pull Requests to GitOps deployments, Git is the universal lingua franca powering worldwide modern software infrastructure.</p>
+        </div>
+      </div>
+
+      <div class="learning-box" style="margin-top: 14px;">
+        <div class="next-title">🎯 The Core Takeaway</div>
+        <p style="margin: 4px 0 0; font-size: 13px; line-height: 1.55; color: var(--text);">
+          Mastering Git gives you absolute dominion over time, state, and collaboration in software. LearnGit trains these mental models through real interactive simulation.
+        </p>
+      </div>
+    `;
+
+    const modal = showModal({
+      title,
+      bodyHtml,
+      actions: [
+        { label: isFa ? 'مشاهده مراحل آموزشی' : isDe ? 'Levels öffnen' : 'Open Levels', className: 'primary', onClick: () => this.openLevels() },
+        { label: ui().close, className: 'ghost', onClick: () => modal.close() },
+      ],
+      onClose: () => this.terminal.focus(),
+    });
+  }
+
+  private handleCommand(raw: string): void {
+    const cmd = raw.trim();
+    if (!cmd) return;
+    this.lastWasMeta = true;
+    this.log.push({ kind: 'cmd', text: cmd });
+    this.terminal.setLog(this.log);
+
+    const lower = cmd.toLowerCase();
+    if (lower === 'levels' || lower === 'level') {
+      this.openLevels();
+      return;
+    }
+    if (lower === 'why' || lower === 'why-git' || lower === 'about-git') {
+      this.showWhyGit();
+      return;
+    }
+    if (lower === 'sandbox' || lower === 'exit level') {
+      this.enterSandbox();
+      return;
+    }
+    if (lower === 'hint') {
+      this.pushOut(this.level?.hint ?? ui().noHintSandbox);
+      if (this.level) {
+        const coach = coachLine(this.state, this.level);
+        if (coach) this.pushMeta(coach);
+      }
+      return;
+    }
+    if (lower === 'steps' || lower === 'next') {
+      if (!this.level) {
+        this.pushMeta(ui().noGoalSandbox);
+        return;
+      }
+      const coach = coachLine(this.state, this.level);
+      this.pushOut(coach ?? ui().allStepsMet);
+      this.dockEl.hidden = false;
+      this.renderAll();
+      return;
+    }
+    if (lower === 'show goal' || lower === 'goal' || lower === 'guide') {
+      this.toggleGoal(true);
+      return;
+    }
+    if (lower === 'hide goal') {
+      this.toggleGoal(false);
+      return;
+    }
+    if (lower === 'show solution' || lower === 'solution') {
+      this.showSolution();
+      return;
+    }
+    if (lower === 'reset') {
+      this.resetLevel();
+      return;
+    }
+    if (lower === 'undo') {
+      if (!this.undoStack.length) {
+        this.pushErr(ui().nothingToUndo);
+        return;
+      }
+      this.state = this.undoStack.pop()!;
+      if (this.golf.length) this.golf.pop();
+      this.pushMeta(ui().undoMeta);
+      this.afterStateChange();
+      return;
+    }
+    if (lower === 'clear') {
+      this.log = [];
+      this.terminal.clear();
+      return;
+    }
+    if (lower === 'lesson' || lower === 'intro' || lower === 'about') {
+      this.replayLesson();
+      return;
+    }
+    if (
+      lower === 'help' ||
+      lower === '?' ||
+      lower === 'help ui' ||
+      lower === 'help page' ||
+      lower === 'tour'
+    ) {
+      if (lower === 'help' || lower === '?') {
+        this.pushOut(
+          [
+            'help ui | tour         — explain every UI region (and highlight them)',
+            'lesson | intro | about — replay level lesson or publisher/about card',
+            'why                    — Git architectural pillars & mental models',
+            'curriculum             — learning outcomes & syllabus',
+            'levels                 — challenge browser',
+          ].join('\n'),
+        );
+      }
+      if (lower === 'help ui' || lower === 'help page' || lower === 'tour') {
+        this.pushOut(formatUiHelpText());
+        this.openUiHelp(true);
+      } else if (lower === 'help' || lower === '?') {
+        this.pushOut(formatUiHelpText());
+        this.openUiHelp(false);
+      }
+      this.terminal.focus();
+      return;
+    }
+
+    if (lower === 'curriculum' || lower === 'outcomes' || lower === 'syllabus') {
+      const lines = curriculumOutcomes().map((o: string, i: number) => `${String(i + 1).padStart(2, ' ')}. ${o}`);
+      const summary = summarizeCurriculum(this.progress);
+      this.pushOut(ui().curriculumOutcomes);
+      this.pushOut(lines.join('\n'));
+      this.pushMeta(ui().progressLevels(summary.solvedCount, summary.total));
+      this.pushMeta(ui().fieldGlossary);
+      this.terminal.focus();
+      return;
+    }
+
+    this.runCommand(cmd, { fromSolution: false });
+  }
+
+  private runCommand(cmd: string, opts: { fromSolution: boolean }): void {
+    this.lastWasMeta = false;
+    this.lastWasSolution = opts.fromSolution;
+    const prev = cloneState(this.state);
+
+    const ctx: ExecContext = {
+      state: this.state,
+      levelId: this.level?.id,
+      goalText: this.level
+        ? `${this.level.objective}\n\nChecks:\n${checkGoal(this.level.goal, this.state)
+            .map((c) => `${c.ok ? '[x]' : '[ ]'} ${c.label} — ${c.detail}`)
+            .join('\n')}`
+        : undefined,
+      solution: this.level?.solution,
+      hint: this.level?.hint,
+      lesson: this.level
+        ? this.level.startDialog.map((s) => `### ${s.title ?? this.level!.name}\n\n${s.markdown}`).join('\n\n')
+        : undefined,
+    };
+
+    const result = execCommand(cmd, ctx);
+
+    if (!result.ok) {
+      this.state = prev;
+      this.pushErr(result.error ?? 'error');
+      if (this.level) {
+        const steps = solutionProgress(this.state, this.level.solution);
+        const next = steps.find((s) => !s.done && !s.optional);
+        if (next?.command) {
+          this.pushMeta(ui().progressKept(next.command));
+        }
+      }
+    } else {
+      if (result.output) this.pushOut(result.output);
+      const why = whyFor(cmd);
+      if (
+        why &&
+        (cmd.includes('add') ||
+          cmd.includes('commit') ||
+          cmd.includes('merge') ||
+          cmd.includes('rebase') ||
+          cmd.includes('reset') ||
+          cmd.includes('revert') ||
+          cmd.includes('push') ||
+          cmd.includes('stash') ||
+          cmd.includes('tag') ||
+          cmd.includes('switch'))
+      ) {
+        this.log.push({ kind: 'why', text: formatWhy(why) });
+        this.terminal.setLog(this.log);
+      }
+    }
+
+    const counts = commandCountsForGolf(cmd) && result.ok;
+    if (counts && !opts.fromSolution) {
+      this.undoStack.push(prev);
+      this.golf.push(cmd);
+    } else if (counts && opts.fromSolution) {
+      this.undoStack.push(prev);
+    }
+
+    this.afterStateChange();
+
+    if (!document.querySelector('.overlay .modal')) {
+      this.terminal.focus();
     }
   }
-}
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+  private afterStateChange(): void {
+    if (this.level) {
+      const solved = solutionComplete(this.state, this.level.solution) || goalSatisfied(this.level.goal, this.state);
+      if (solved && !this.solvedFlash) {
+        this.solvedFlash = true;
+        const num = this.golf.length;
+        const best = this.progress[this.level.id]?.bestCommands;
+        const nextBest = best === undefined ? num : Math.min(best, num);
+        this.progress[this.level.id] = { solved: true, bestCommands: nextBest };
+        saveProgress(this.progress);
+        this.pushOut('');
+        this.pushOut(ui().levelSolvedBanner + ' ' + this.level.name);
+        this.pushOut(
+          num > 0
+            ? ui().commandsUsed(num, this.level.par)
+            : ui().idealCommands(this.level.par),
+        );
+        this.pushOut(ui().partyMode);
+        this.dockEl.hidden = false;
+      } else if (!solved && this.solvedFlash) {
+        this.solvedFlash = false;
+      }
+      if (this.level && !solved && !this.lastWasMeta && !this.lastWasSolution) {
+        const coach = coachLine(this.state, this.level);
+        if (coach) {
+          const first = nextSteps(this.state, this.level.goal, this.level)[0];
+          if (first?.command) {
+            this.pushMeta(ui().nextMeta(first.command));
+          } else {
+            this.pushMeta(coach.split('\n')[0] ?? ui().continueGoal);
+          }
+        }
+      }
+    }
+    this.renderAll();
+    if (this.solvedFlash && this.level) this.maybeOfferNext();
+  }
 
-export { emptyState, runCommands };
-export type { CommandResult };
+  private maybeOfferNext(): void {
+    if (!this.level || this.offered) return;
+    this.offered = true;
+
+    const level = this.level;
+    const next = getNextLevel(level.id);
+    const cmds = this.golf.length || null;
+    const curriculum = summarizeCurriculum(this.progress);
+    const share = buildShareTargets({
+      levelName: level.name,
+      levelId: level.id,
+      commands: cmds,
+      par: level.par,
+      curriculum,
+    });
+    const total = allLevels.length;
+    const solvedCount = curriculum.solvedCount;
+    const underPar = cmds !== null && cmds <= level.par;
+    const golfLine =
+      cmds === null
+        ? ui().idealForLevel(level.par)
+        : underPar
+          ? `**${cmds}** ${ui().idealForLevelShort(level.par)}`
+          : `**${cmds}** command${cmds === 1 ? '' : 's'}. Ideal is ${level.par}. Still counts — you got there.`;
+
+    const cheers = ui().cheers;
+    const cheer = cheers[Math.floor(Math.random() * cheers.length)]!;
+
+    const learnedPreview = curriculum.learned
+      .map((l) => `<li>${escapeHtml(l.seriesTitle)}: ${escapeHtml(l.name)}</li>`)
+      .join('');
+
+    const bodyHtml = `
+      <div class="celebrate" aria-live="polite">
+        <div class="celebrate-visual" aria-hidden="true">
+          <div class="celebrate-ring"></div>
+          <div class="celebrate-star">★</div>
+        </div>
+        <div class="celebrate-badge">LEVEL CLEARED</div>
+        <h3 class="celebrate-title">${escapeHtml(level.name)}</h3>
+        <p class="celebrate-sub">${escapeHtml(level.seriesTitle)} · <code>${escapeHtml(level.id)}</code></p>
+        <p class="celebrate-cheer">${escapeHtml(cheer)}</p>
+        <div class="celebrate-stats">${renderMarkdown(golfLine)}</div>
+        <div class="celebrate-progress">
+          <div class="prog-track"><div class="prog-fill" style="width:${curriculum.percent}%"></div></div>
+          <div class="par-note">${solvedCount} / ${total} levels solved · progress saved in this browser</div>
+        </div>
+        <div class="share-block">
+          <div class="next-title">${escapeHtml(ui().shareTitle)}</div>
+          <div class="learned-preview">
+            <div class="par-note">${escapeHtml(ui().styleList)}</div>
+            <ul>${learnedPreview || `<li>${escapeHtml(ui().solveMoreLevels)}</li>`}</ul>
+          </div>
+          <div class="share-row" role="group" aria-label="${escapeHtml(ui().shareGroupLabel)}">
+            <button type="button" class="share-btn linkedin" data-share="linkedin">${escapeHtml(ui().linkedin)}</button>
+            <button type="button" class="share-btn x" data-share="x">${escapeHtml(ui().xTwitter)}</button>
+            <button type="button" class="share-btn facebook" data-share="facebook">${escapeHtml(ui().facebook)}</button>
+            <button type="button" class="share-btn copy" data-share="copy">${escapeHtml(ui().copyPost)}</button>
+          </div>
+          <div class="share-status" data-share-status hidden></div>
+        </div>
+        ${
+          next
+            ? `<div class="celebrate-next">${renderMarkdown(ui().nextCelebration(next.id, next.name))}</div>`
+            : `<div class="celebrate-next">${renderMarkdown(ui().lastInPack)}</div>`
+        }
+      </div>
+    `;
+
+    const actions = [
+      {
+        label: ui().baskInIt,
+        className: 'ghost',
+        onClick: () => {
+          this.offered = false;
+          this.terminal.focus();
+        },
+      },
+    ];
+    if (next) {
+      actions.push({
+        label: ui().celebrateOn(next.id),
+        className: 'primary',
+        onClick: () => {
+          this.offered = false;
+          this.startLevel(next.id);
+        },
+      });
+    } else {
+      actions.push({
+        label: ui().browseLevels,
+        className: 'primary',
+        onClick: () => {
+          this.offered = false;
+          this.openLevels();
+        },
+      });
+    }
+
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const confetti = launchConfetti(4800);
+    playFanfare();
+
+    const modal = showModal({
+      title: ui().levelComplete,
+      bodyHtml,
+      variant: 'celebrate',
+      actions: actions.map((a) => ({
+        ...a,
+        onClick: () => {
+          confetti?.stop();
+          modal.close();
+          a.onClick();
+        },
+      })),
+      onClose: () => {
+        confetti?.stop();
+        this.offered = false;
+        this.terminal.focus();
+      },
+    });
+
+    modal.el.querySelectorAll<HTMLButtonElement>('[data-share]').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        const kind = (btn.dataset.share ?? 'copy') as 'linkedin' | 'facebook' | 'x' | 'copy';
+        const status = modal.el.querySelector<HTMLElement>('[data-share-status]');
+        const result = await shareWithClipboard(kind, share);
+        if (!status) return;
+        status.hidden = false;
+        if (kind === 'copy') {
+          status.textContent = result.copied ? ui().copyOk : ui().copyFail;
+          return;
+        }
+        status.textContent = result.copied ? ui().shareCopied : ui().shareOpened;
+      });
+    });
+
+    modal.el.querySelector('.modal')?.addEventListener('keydown', (ev) => {
+      const key = (ev as KeyboardEvent).key;
+      if (key === 'Enter') {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    });
+  }
+}

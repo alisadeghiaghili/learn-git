@@ -1421,3 +1421,34 @@ export const seriesOrder = [
   'History craft',
   'Field practice',
 ];
+
+export interface SeriesInfo {
+  series: string;
+  title: string;
+  levels: LevelDef[];
+}
+
+export function seriesOf(): SeriesInfo[] {
+  return seriesOrder.map((s) => ({
+    series: s,
+    title: s,
+    levels: allLevels.filter((l) => l.series === s),
+  }));
+}
+
+export function getNextLevel(currentId: string): LevelDef | null {
+  const idx = allLevels.findIndex((l) => l.id === currentId);
+  return idx >= 0 && idx < allLevels.length - 1 ? allLevels[idx + 1]! : null;
+}
+
+export function curriculumOutcomes(): string[] {
+  return [
+    'Initialize repositories and master the working tree → staging → commit pipeline',
+    'Inspect file deltas with git diff and recover worktree files cleanly',
+    'Branch, switch, and merge features while understanding commit pointer topology',
+    'Collaborate with remotes: fetch, push, pull, and track upstream branches',
+    'Safely undo mistakes: reset (--soft/--hard), revert, and stash work in progress',
+    'Craft professional commit histories: rebase, cherry-pick, tag, and resolve merge conflicts',
+    'Execute production engineering workflows: multi-branch features and emergency rollbacks',
+  ];
+}

@@ -19,6 +19,7 @@ if (!params.has('NODEMO')) {
   const w = ui(getLang()).welcome;
   showModal({
     title: w.title,
+    titleHtml: w.titleHtml,
     bodyHtml: renderMarkdown(
       [
         w.intro,

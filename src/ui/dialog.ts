@@ -1,158 +1,205 @@
-/** Minimal modal + markdown renderer. */
+export function escapeHtml(s: string): string {
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function renderInline(raw: string): string {
+  // Keep trusted <a>…</a> HTML (Buy Me a Coffee button, links) as real markup.
+  const slots: string[] = [];
+  const parts = raw.split(/(<a\b[\s\S]*?<\/a>)/gi);
+  const mapped = parts
+    .map((part, i) => {
+      if (i % 2 === 1) {
+        slots.push(part);
+        return '@@HTML' + (slots.length - 1) + '@@';
+      }
+      let t = escapeHtml(part);
+      t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+      t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      t = t.replace(
+        /\[([^\]]+)\]\(([^)\s]+)\)/g,
+        (_m, label: string, href: string) =>
+          `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`,
+      );
+      return t;
+    })
+    .join('');
+  return mapped.replace(/@@HTML(\d+)@@/g, (_m, i: string) => slots[Number(i)] ?? '');
+}
+
+function splitTableRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+
+function isTableRow(line: string): boolean {
+  const s = line.trim();
+  if (!s.includes('|')) return false;
+  return s.startsWith('|')
+    ? s.endsWith('|') && splitTableRow(s).length >= 1
+    : s.split('|').length >= 2;
+}
+
+function isTableSeparator(line: string): boolean {
+  const cells = splitTableRow(line);
+  return (
+    cells.length >= 1 &&
+    cells.every((c) => /^:?-+:?$/.test(c.trim()) && c.includes('-'))
+  );
+}
+
+function renderTable(rows: string[]): string {
+  if (rows.length < 2) return '';
+  const header = splitTableRow(rows[0]!);
+  const body = rows.slice(2);
+  const headHtml = header.map((h) => `<th>${renderInline(h)}</th>`).join('');
+  const bodyHtml = body
+    .map(
+      (r) =>
+        `<tr>${splitTableRow(r)
+          .map((c) => `<td>${renderInline(c)}</td>`)
+          .join('')}</tr>`,
+    )
+    .join('');
+  return `<div class="md-table-wrap"><table class="md-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
+}
+
+function isListItem(line: string): boolean {
+  return /^\s*[-*+]\s+\S/.test(line) || /^\s*\d+\.\s+\S/.test(line);
+}
+
+function renderListItem(line: string): string {
+  const s = line.trim().replace(/^([-*+]|\d+\.)\s+/, '');
+  return `<li>${renderInline(s)}</li>`;
+}
+
+function renderProse(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let para: string[] = [];
+  let list: string[] = [];
+
+  const flushPara = () => {
+    if (!para.length) return;
+    out.push(`<p>${para.map(renderInline).join('<br/>')}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (!list.length) return;
+    out.push(`<ul>${list.join('')}</ul>`);
+    list = [];
+  };
+  const flushAll = () => {
+    flushPara();
+    flushList();
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1]!)) {
+      flushAll();
+      const rows = [line, lines[i + 1]!];
+      i += 2;
+      while (i < lines.length && isTableRow(lines[i]!) && !isTableSeparator(lines[i]!)) {
+        rows.push(lines[i]!);
+        i += 1;
+      }
+      out.push(renderTable(rows));
+      continue;
+    }
+    if (!line.trim()) {
+      flushAll();
+      i += 1;
+      continue;
+    }
+    if (isListItem(line)) {
+      flushPara();
+      list.push(renderListItem(line));
+      i += 1;
+      continue;
+    }
+    flushList();
+    para.push(line);
+    i += 1;
+  }
+  flushAll();
+  return out.join('');
+}
+
+/** Markdown subset: fences, tables, lists, bold, code, trusted anchors. */
+export function renderMarkdown(md: string): string {
+  const blocks = md.split(/```/);
+  let html = '';
+  blocks.forEach((block, i) => {
+    if (i % 2 === 1) {
+      html += `<pre>${escapeHtml(block.replace(/^\w*\n/, ''))}</pre>`;
+      return;
+    }
+    html += renderProse(block);
+  });
+  return html;
+}
 
 export interface ModalAction {
   label: string;
   className?: string;
-  onClick?: () => void;
+  onClick: () => void;
 }
 
-export interface ModalOptions {
+export function showModal(opts: {
   title: string;
+  titleHtml?: string;
   bodyHtml: string;
   actions?: ModalAction[];
   onClose?: () => void;
-}
-
-export function renderMarkdown(md: string): string {
-  const lines = md.split('\n');
-  const html: string[] = [];
-  let inCode = false;
-  let inTable = false;
-  let list: string[] = [];
-
-  const flushList = () => {
-    if (list.length) {
-      html.push(`<ul>${list.map((li) => `<li>${inline(li)}</li>`).join('')}</ul>`);
-      list = [];
-    }
-  };
-  const flushTable = () => {
-    if (inTable) {
-      html.push('</tbody></table>');
-      inTable = false;
-    }
-  };
-
-  for (const raw of lines) {
-    const line = raw;
-    if (line.startsWith('```')) {
-      flushList();
-      flushTable();
-      if (inCode) {
-        html.push('</pre>');
-        inCode = false;
-      } else {
-        html.push('<pre>');
-        inCode = true;
-      }
-      continue;
-    }
-    if (inCode) {
-      html.push(escapeHtml(line) + '\n');
-      continue;
-    }
-    if (/^\|/.test(line)) {
-      flushList();
-      const cells = line
-        .split('|')
-        .map((c) => c.trim())
-        .filter((c, i, arr) => !(i === 0 && c === '') && !(i === arr.length - 1 && c === ''));
-      if (!inTable) {
-        html.push(`<table><tbody>`);
-        inTable = true;
-        html.push(`<tr>${cells.map((c) => `<th>${inline(c)}</th>`).join('')}</tr>`);
-      } else if (/^[\s|:-]+$/.test(line)) {
-        // separator — skip
-      } else {
-        html.push(`<tr>${cells.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`);
-      }
-      continue;
-    }
-    flushTable();
-
-    if (/^#{1,3}\s/.test(line)) {
-      flushList();
-      const level = line.match(/^#+/)![0].length;
-      html.push(`<h${level + 2}>${inline(line.replace(/^#+\s*/, ''))}</h${level + 2}>`);
-      continue;
-    }
-    if (/^[-*]\s+/.test(line)) {
-      list.push(line.replace(/^[-*]\s+/, ''));
-      continue;
-    }
-    if (/^\d+\.\s+/.test(line)) {
-      list.push(line.replace(/^\d+\.\s+/, ''));
-      continue;
-    }
-    if (line.trim() === '') {
-      flushList();
-      continue;
-    }
-    flushList();
-    // Allow raw HTML blocks (coffee button, anchors) through unescaped.
-    if (/^\s*<(a|img|div|span|button)\b/i.test(line)) {
-      html.push(line);
-      continue;
-    }
-    html.push(`<p>${inline(line)}</p>`);
-  }
-  flushList();
-  flushTable();
-  if (inCode) html.push('</pre>');
-  return html.join('');
-}
-
-function inline(text: string): string {
-  let s = escapeHtml(text);
-  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#C084FC">$1</a>');
-  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  return s;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-export interface ModalHandle {
-  el: HTMLElement;
-  close: () => void;
-}
-
-export function showModal(opts: ModalOptions): ModalHandle {
-  const existing = document.querySelector('.modal-backdrop');
-  existing?.remove();
-
-  const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop';
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.innerHTML = `<h2></h2><div class="slides"></div><div class="modal-actions"></div>`;
-  modal.querySelector('h2')!.textContent = opts.title;
-  modal.querySelector('.slides')!.innerHTML = opts.bodyHtml;
-
-  const actions = modal.querySelector('.modal-actions')!;
+  variant?: 'default' | 'celebrate';
+}): { close: () => void; el: HTMLElement } {
+  const overlay = document.createElement('div');
+  overlay.className = `overlay${opts.variant === 'celebrate' ? ' overlay-celebrate' : ''}`;
+  const titleClass = opts.variant === 'celebrate' ? ' class="visually-hidden"' : '';
+  const titleContent = opts.titleHtml ?? escapeHtml(opts.title);
+  overlay.innerHTML = `
+    <div class="modal${opts.variant === 'celebrate' ? ' modal-celebrate' : ''}" role="dialog" aria-modal="true" aria-label="${escapeHtml(opts.title)}">
+      <h2${titleClass}>${titleContent}</h2>
+      <div class="markdown">${opts.bodyHtml}</div>
+      <div class="modal-actions"></div>
+    </div>
+  `;
+  const actionsEl = overlay.querySelector('.modal-actions') as HTMLElement;
   const close = () => {
-    backdrop.remove();
+    overlay.remove();
     opts.onClose?.();
   };
-  for (const a of opts.actions ?? [{ label: 'Close', className: 'primary', onClick: () => undefined }]) {
+
+  const actions = opts.actions?.length
+    ? opts.actions
+    : [{ label: 'Close', onClick: () => close() }];
+
+  for (const action of actions) {
     const btn = document.createElement('button');
-    btn.textContent = a.label;
-    if (a.className) btn.className = a.className;
+    btn.className = action.className ?? '';
+    btn.textContent = action.label;
     btn.addEventListener('click', () => {
-      close();
-      a.onClick?.();
+      action.onClick();
+      if (document.body.contains(overlay)) overlay.remove();
     });
-    actions.appendChild(btn);
+    actionsEl.appendChild(btn);
   }
 
-  backdrop.appendChild(modal);
-  document.body.appendChild(backdrop);
-  return { el: modal, close };
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.body.appendChild(overlay);
+  const modalEl = overlay.querySelector<HTMLElement>('.modal');
+  if (modalEl) {
+    modalEl.tabIndex = -1;
+    requestAnimationFrame(() => modalEl.focus());
+  }
+  return { close, el: overlay };
 }

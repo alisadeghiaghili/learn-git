@@ -22,10 +22,16 @@ import {
   untrackedPaths,
 } from './state';
 import { shortSha } from './hash';
+import { tokenize } from './tokenizer';
 import { formatConcepts, findConcept } from './glossary';
 import { formatCurriculum } from './teach';
 import { FIELD_NOTES, whyFor, formatWhy } from './coach';
 import { solutionCommands, allLevelSummaries } from './solution';
+const COUNTING = /^git (add|commit|checkout|switch|branch|merge|rebase|reset|revert|cherry-pick|restore|stash|tag|push|pull|fetch)|^edit |^rm /;
+
+export function commandCountsForGolf(raw: string): boolean {
+  return COUNTING.test(raw.trim());
+}
 
 export interface ExecContext {
   state: RepoState;
@@ -380,26 +386,6 @@ function isGit(parts: string[]): boolean {
   return parts[0] === 'git';
 }
 
-function tokenize(line: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let quote: string | null = null;
-  for (const ch of line) {
-    if (quote) {
-      if (ch === quote) quote = null;
-      else cur += ch;
-    } else if (ch === '"' || ch === "'") {
-      quote = ch;
-    } else if (ch === ' ') {
-      if (cur) out.push(cur);
-      cur = '';
-    } else {
-      cur += ch;
-    }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
 
 function gitInit(state: RepoState): CommandResult {
   if (state.initialized) return fail('Reinitialized existing Git repository');
@@ -536,6 +522,16 @@ function gitCommit(state: RepoState, args: string[]): CommandResult {
     return ok(`[${state.detachedHead ? 'detached' : state.HEAD} ${shortSha(commit.hash)}] ${message}`, 'commit');
   }
 
+  const hasAllFlag = args.includes('-a') || args.includes('--all') || args.some((a) => a.startsWith('-am') || a === '-am');
+  if (hasAllFlag) {
+    for (const f of Object.values(state.files)) {
+      if (f.tracked && (f.headBlob !== f.contentId || f.deleted)) {
+        f.staged = true;
+        if (!state.staging.includes(f.path)) state.staging.push(f.path);
+      }
+    }
+  }
+
   const staged = stagedPaths(state);
   if (!staged.length) {
     // allow empty? teach that it fails
@@ -634,15 +630,28 @@ function gitShow(state: RepoState, args: string[]): CommandResult {
 }
 
 function gitRestore(state: RepoState, args: string[]): CommandResult {
+  const stagedOnly = args.includes('--staged');
   const paths = args.filter((a) => !a.startsWith('-'));
-  if (!paths.length) return fail('usage: git restore <path>');
+  if (!paths.length) return fail('usage: git restore [--staged] <path>');
   let n = 0;
   for (const spec of paths) {
     for (const p of matchPath(state, spec)) {
-      if (restoreFileFromHead(state, p)) n++;
+      const f = state.files[p];
+      if (!f) continue;
+      if (stagedOnly) {
+        if (f.staged) {
+          f.staged = false;
+          state.staging = state.staging.filter((s) => s !== p);
+          n++;
+        }
+      } else {
+        if (restoreFileFromHead(state, p)) n++;
+      }
     }
   }
-  return n ? ok(`restored ${n} path(s) from HEAD`) : fail('pathspec did not match any file(s) known to git');
+  return n
+    ? ok(stagedOnly ? `unstaged ${n} path(s)` : `restored ${n} path(s) from HEAD`, stagedOnly ? 'stage' : 'none')
+    : fail('pathspec did not match any file(s) known to git');
 }
 
 function gitRm(state: RepoState, args: string[]): CommandResult {

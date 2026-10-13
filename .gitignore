@@ -4,3 +4,7 @@ dist/
 .DS_Store
 .vite/
 output/
+.claude/
+CLAUDE.md
+.agents/
+graphify-out/

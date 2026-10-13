@@ -244,14 +244,20 @@ export function sandboxState(): RepoState {
 }
 
 export function parseMessageArg(args: string[]): string | undefined {
-  // Prefer -m "message" / --message "message"
+  // Support -m "msg", --message "msg", --message=msg, -m"msg", -am "msg", -am"msg"
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '-m' || a === '--message') {
+    if (a === '-m' || a === '--message' || a === '-am') {
       return args[i + 1];
     }
     if (a.startsWith('--message=')) {
       return a.slice('--message='.length);
+    }
+    if (a.startsWith('-m') && a.length > 2) {
+      return a.slice(2);
+    }
+    if (a.startsWith('-am') && a.length > 3) {
+      return a.slice(3);
     }
   }
   return undefined;

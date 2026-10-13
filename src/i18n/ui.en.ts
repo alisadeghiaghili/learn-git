@@ -123,7 +123,8 @@ export const UI_EN: UiStrings = {
     notDirty: 'No unstaged dirt',
   },
   welcome: {
-    title: 'LearnGit',
+    title: 'Welcome to LearnGit',
+    titleHtml: 'Welcome to Learn<span>Git</span>',
     intro: 'Interactive **Git** tutorial — sandbox + guided levels.',
     board:
       'The board shows **Working Tree → Staging → Repository → Remote**. That is the material flow Git manages.',

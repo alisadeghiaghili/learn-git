@@ -1,9 +1,18 @@
 /** Field coaching — production notes and post-command Why blocks. */
 
+import type { GoalCheck, LevelDef, RepoState } from './types';
+import { evaluateGoal } from './compare';
+import { solutionProgress, suggestFromSolution } from './solution';
+
 export interface WhyBlock {
   trigger: string;
   title: string;
   body: string;
+}
+
+export interface NextStep {
+  label: string;
+  command: string | null;
 }
 
 export const FIELD_NOTES: string[] = [
@@ -80,4 +89,42 @@ export function whyFor(command: string): WhyBlock | undefined {
 
 export function formatWhy(block: WhyBlock): string {
   return `Why — ${block.title}\n${block.body}`;
+}
+
+export function nextSteps(state: RepoState, goal: GoalCheck, level?: LevelDef | null): NextStep[] {
+  if (level?.solution?.length) {
+    return solutionProgress(state, level.solution)
+      .filter((s) => !s.done && !s.optional)
+      .map((s) => ({ label: s.note, command: s.command }));
+  }
+  const { statuses } = evaluateGoal(state, goal);
+  const steps: NextStep[] = [];
+  statuses.forEach((st, i) => {
+    if (st.met) return;
+    const cmd = suggestFromSolution(state, (level ?? null) as LevelDef | null);
+    steps.push({ label: st.label, command: i === 0 ? cmd : null });
+  });
+  return steps;
+}
+
+export function formatNextSteps(steps: NextStep[], level: LevelDef | null): string {
+  if (!steps.length) {
+    return 'All goals completed for this level.';
+  }
+  const lines = [`Remaining steps for ${level ? level.id : 'current level'}:`];
+  steps.forEach((s, i) => {
+    const cmd = s.command ? `\n      ${s.command}` : '';
+    lines.push(`  ${i + 1}. [ ] ${s.label}${cmd}`);
+  });
+  return lines.join('\n');
+}
+
+export function coachLine(state: RepoState, level: LevelDef | null): string | null {
+  if (!level) return null;
+  if (level.solution.length && solutionProgress(state, level.solution).every((s) => s.done || s.optional)) {
+    return null;
+  }
+  const { solved } = evaluateGoal(state, level.goal);
+  if (solved && !level.solution.length) return null;
+  return formatNextSteps(nextSteps(state, level.goal, level), level);
 }

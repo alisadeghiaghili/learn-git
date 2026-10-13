@@ -123,7 +123,8 @@ export const UI_FA: UiStrings = {
     notDirty: 'بدون تغییر آماده‌نشده',
   },
   welcome: {
-    title: 'LearnGit',
+    title: 'Welcome to LearnGit',
+    titleHtml: 'Welcome to Learn<span>Git</span>',
     intro: 'آموزش تعاملی **گیت** — سندباکس + مرحله‌های راهنما.',
     board:
       'بورد نشان می‌دهد **درخت کار → آماده‌سازی → مخزن → ریموت**. این همان جریان ماده‌ای است که گیت مدیریت می‌کند.',

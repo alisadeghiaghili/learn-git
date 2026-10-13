@@ -22,6 +22,7 @@ export interface FileStatus {
 
 export interface WelcomeStrings {
   title: string;
+  titleHtml?: string;
   intro: string;
   board: string;
   tracks: string[];
