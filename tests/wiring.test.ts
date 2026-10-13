@@ -7,8 +7,10 @@ import { allLevels } from '../src/levels';
 import { topicIds } from '../src/learning';
 import { ui } from '../src/i18n/ui';
 import { LEVELS_FA } from '../src/i18n/levels.fa';
+import { LEVELS_DE } from '../src/i18n/levels.de';
 import type { Lang } from '../src/i18n/lang';
 import type { GoalCheck } from '../src/engine/types';
+import type { LevelOverrides } from '../src/i18n/levels';
 
 function kinds(g: GoalCheck): string[] {
   return g.kind === 'allOf' ? g.checks.flatMap(kinds) : [g.kind];
@@ -38,31 +40,39 @@ describe('goal-label wiring', () => {
   });
 });
 
-describe('Persian level text', () => {
-  // A missing override silently renders English (by design fallback), so guard
-  // that the FA catalog is a 1:1 cover of every level id.
-  it('LEVELS_FA covers every level id, with no dangling keys', () => {
-    const ids = allLevels.map((l) => l.id);
-    const faIds = Object.keys(LEVELS_FA);
-    const missing = ids.filter((id) => !LEVELS_FA[id]);
-    const dangling = faIds.filter((id) => !ids.includes(id));
-    expect(missing, `levels with no FA override: ${missing.join(', ')}`).toEqual([]);
-    expect(dangling, `FA keys that are not a level id: ${dangling.join(', ')}`).toEqual([]);
-  });
+// A missing override silently renders English (by design fallback), so guard
+// that each non-English catalog is a 1:1 cover of every level id AND that the
+// translated prose actually differs from the English source.
+const CATALOGS: { label: string; catalog: LevelOverrides }[] = [
+  { label: 'FA', catalog: LEVELS_FA },
+  { label: 'DE', catalog: LEVELS_DE },
+];
 
-  it('each FA override translates the user-facing fields (not left as English)', () => {
-    for (const l of allLevels) {
-      const o = LEVELS_FA[l.id];
-      expect(o, `${l.id}: no FA override`).toBeTruthy();
-      // name/objective are prose and must actually be Persian, not the English
-      // source. A hint may be command-only (e.g. `git mv a b`) and so is only
-      // required to be present.
-      expect(o.name, `${l.id}: name still English`).not.toBe(l.name);
-      expect(o.objective, `${l.id}: objective still English`).not.toBe(l.objective);
-      expect(o.hint, `${l.id}: hint missing`).toBeTruthy();
-      expect(o.hint!.trim().length, `${l.id}: hint empty`).toBeGreaterThan(0);
-      expect(o.startDialog, `${l.id}: startDialog missing`).toBeTruthy();
-      expect(o.startDialog!.length, `${l.id}: startDialog empty`).toBeGreaterThan(0);
-    }
+for (const { label, catalog } of CATALOGS) {
+  describe(`${label} level text`, () => {
+    it(`${label} covers every level id, with no dangling keys`, () => {
+      const ids = allLevels.map((l) => l.id);
+      const catIds = Object.keys(catalog);
+      const missing = ids.filter((id) => !catalog[id]);
+      const dangling = catIds.filter((id) => !ids.includes(id));
+      expect(missing, `levels with no ${label} override: ${missing.join(', ')}`).toEqual([]);
+      expect(dangling, `${label} keys that are not a level id: ${dangling.join(', ')}`).toEqual([]);
+    });
+
+    it(`each ${label} override translates the user-facing fields (not left as English)`, () => {
+      for (const l of allLevels) {
+        const o = catalog[l.id];
+        expect(o, `${label}/${l.id}: no override`).toBeTruthy();
+        // name/objective are prose and must actually be translated, not the
+        // English source. A hint may be command-only (e.g. `git mv a b`) and so
+        // is only required to be present.
+        expect(o!.name, `${label}/${l.id}: name still English`).not.toBe(l.name);
+        expect(o!.objective, `${label}/${l.id}: objective still English`).not.toBe(l.objective);
+        expect(o!.hint, `${label}/${l.id}: hint missing`).toBeTruthy();
+        expect(o!.hint!.trim().length, `${label}/${l.id}: hint empty`).toBeGreaterThan(0);
+        expect(o!.startDialog, `${label}/${l.id}: startDialog missing`).toBeTruthy();
+        expect(o!.startDialog!.length, `${label}/${l.id}: startDialog empty`).toBeGreaterThan(0);
+      }
+    });
   });
-});
+}
