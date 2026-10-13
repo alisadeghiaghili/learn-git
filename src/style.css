@@ -9,6 +9,8 @@
   --stage: #2dd4bf;
   --repo: #8b5cf6;
   --remote: #60a5fa;
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
   --code: #a3e635;
   --ok: #34d399;
   --warn: #fbbf24;
@@ -78,28 +80,76 @@ html[lang='fa'] {
 }
 
 .toolbar button {
+  appearance: none;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 12px;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
   cursor: pointer;
-  font-family: inherit;
+  transition: all 120ms ease;
+  white-space: nowrap;
 }
 
 .toolbar button:hover {
-  border-color: var(--haze);
+  background: #25334d;
+  border-color: #3b4e6d;
+  color: #fff;
 }
 
 .toolbar button.primary {
-  background: var(--repo);
-  border-color: var(--repo);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.toolbar button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
   color: #fff;
 }
 
 .toolbar button.danger {
   color: var(--err);
+}
+
+/* Toolbar links (GitHub / coffee) rendered as bordered buttons, learn-powershell style */
+.toolbar a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  text-decoration: none;
+  color: var(--text);
+  padding: 6px 12px;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  transition: all 120ms ease;
+}
+
+.toolbar a:hover {
+  background: #25334d;
+  border-color: #3b4e6d;
+  color: #fff;
+}
+
+.toolbar a.support {
+  border-color: #c9a227;
+  color: #e8c547;
+  background: transparent;
+  font-weight: 600;
+}
+
+.toolbar a.support:hover {
+  background: rgba(201, 162, 39, 0.12);
+  border-color: #e8c547;
+  color: #f0d56a;
 }
 
 /* Language switcher (EN / FA / DE) */
@@ -111,40 +161,56 @@ html[lang='fa'] {
 }
 
 .lang-btn {
+  appearance: none;
   background: var(--panel-2);
   color: var(--haze);
   border: none;
   border-radius: 0;
-  padding: 6px 8px;
-  font-size: 11px;
+  padding: 6px 10px;
+  min-height: 34px;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
   font-family: inherit;
+  transition: all 120ms ease;
 }
 
 .lang-btn + .lang-btn {
   border-inline-start: 1px solid var(--line);
 }
 
+.lang-btn:hover {
+  background: #25334d;
+  color: #fff;
+}
+
 .lang-btn.active {
-  background: var(--repo);
+  background: var(--accent);
   color: #fff;
 }
 
 /* Clickable "you are learning" topic chips */
 .chip-topic {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--panel-2);
   color: var(--haze);
   border: 1px solid var(--line);
   border-radius: 999px;
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 3px 10px;
   cursor: pointer;
   font-family: inherit;
+  white-space: nowrap;
+  transition: all 120ms ease;
 }
 
 .chip-topic:hover {
   border-color: var(--stage);
   color: var(--stage);
+  background: #25334d;
 }
 
 /* ── Board ── */
@@ -521,20 +587,40 @@ html[lang='fa'] {
 }
 
 .modal-actions button {
+  appearance: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 14px;
   cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
+  transition: all 120ms ease;
+}
+
+.modal-actions button:hover {
+  background: #25334d;
+  border-color: #3b4e6d;
+  color: #fff;
 }
 
 .modal-actions button.primary {
-  background: var(--repo);
-  border-color: var(--repo);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
+}
+
+.modal-actions button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+}
+
+.modal-actions button.ghost {
+  background: transparent;
 }
 
 /* ── Levels modal list ── */
@@ -557,23 +643,26 @@ html[lang='fa'] {
 }
 
 .level-row {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  text-align: left;
+  text-align: start;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel-2);
   color: var(--text);
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
+  transition: all 120ms ease;
 }
 
 .level-row:hover {
-  border-color: var(--haze);
+  background: #172133;
+  border-color: #3b4e6d;
 }
 
 .level-row.active {

@@ -175,8 +175,8 @@ export class App {
       <button data-action="undo" type="button">${S.toolbar.undo}</button>
       <button data-action="reset" type="button">${S.toolbar.reset}</button>
       <button data-action="sandbox" type="button">${S.toolbar.sandbox}</button>
-      <a href="${REPO_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--haze);font-size:12px;text-decoration:none;margin-left:4px">${S.toolbar.github}</a>
-      <a href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--work);font-size:12px;text-decoration:none">${S.toolbar.coffee}</a>
+      <a href="${REPO_URL}" target="_blank" rel="noopener noreferrer">${S.toolbar.github}</a>
+      <a class="support" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${S.toolbar.coffee}</a>
     `;
     this.root.appendChild(toolbar);
     this.levelNameEl = toolbar.querySelector('.level-name') as HTMLElement;
