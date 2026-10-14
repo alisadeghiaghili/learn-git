@@ -111,8 +111,8 @@ describe('getCachedFloor', () => {
     expect(getCachedFloor()).toBe(VISITOR_BASELINE);
   });
   it('returns the cached count when it is at/above the baseline', () => {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ count: 500, at: 1 }));
-    expect(getCachedFloor()).toBe(500);
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ count: 2500, at: 1 }));
+    expect(getCachedFloor()).toBe(2500);
   });
   it('never returns below the baseline', () => {
     localStorage.setItem(CACHE_KEY, JSON.stringify({ count: 50, at: 1 }));
@@ -146,27 +146,27 @@ describe('removeLegacyKeys', () => {
 describe('loadVisitorCount', () => {
   it('reads the shared value without incrementing (returning browser)', async () => {
     localStorage.setItem(LAST_VISIT_KEY, today()); // not a new daily visit
-    const { fn, calls } = fakeFetch({ ok: true, body: '{"value":150}' });
+    const { fn, calls } = fakeFetch({ ok: true, body: '{"value":2150}' });
     const count = await loadVisitorCount(fn);
-    expect(count).toBe(150);
+    expect(count).toBe(2150);
     expect(calls.some((c) => c.includes('/api/hit?'))).toBe(false); // no increment
   });
 
   it('increments once on a genuinely new daily visit', async () => {
-    const { fn, calls } = fakeFetch({ ok: true, body: '{"value":150}' });
+    const { fn, calls } = fakeFetch({ ok: true, body: '{"value":2150}' });
     const count = await loadVisitorCount(fn);
-    expect(count).toBe(151); // 150 + the daily hit
+    expect(count).toBe(2151); // 2150 + the daily hit
     expect(calls.filter((c) => c.includes('/api/hit?')).length).toBe(1);
     // the dedup flag is now set → a second load does not re-increment
-    const { fn: fn2 } = fakeFetch({ ok: true, body: '{"value":151}' });
-    expect(await loadVisitorCount(fn2)).toBe(151);
+    const { fn: fn2 } = fakeFetch({ ok: true, body: '{"value":2151}' });
+    expect(await loadVisitorCount(fn2)).toBe(2151);
   });
 
   it('never renders below its cached floor (never-downgrade)', async () => {
     localStorage.setItem(LAST_VISIT_KEY, today());
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ count: 500, at: 1 }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ count: 2500, at: 1 }));
     const { fn } = fakeFetch({ ok: true, body: '{"value":100}' }); // server regressed
-    expect(await loadVisitorCount(fn)).toBe(500);
+    expect(await loadVisitorCount(fn)).toBe(2500);
   });
 
   it('never renders below the baseline', async () => {
@@ -177,9 +177,9 @@ describe('loadVisitorCount', () => {
 
   it('writes the resolved total back to the cache', async () => {
     localStorage.setItem(LAST_VISIT_KEY, today());
-    const { fn } = fakeFetch({ ok: true, body: '{"value":300}' });
-    expect(await loadVisitorCount(fn)).toBe(300);
-    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).count).toBe(300);
+    const { fn } = fakeFetch({ ok: true, body: '{"value":2300}' });
+    expect(await loadVisitorCount(fn)).toBe(2300);
+    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).count).toBe(2300);
   });
 
   it('returns null when the read fails, leaving the floor in place', async () => {

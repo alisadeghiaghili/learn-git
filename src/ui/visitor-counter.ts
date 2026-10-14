@@ -18,8 +18,8 @@ export const COUNTER_PATH = 'learn-git';
 const GET_URL = `https://api.visitorbadge.io/api/get?path=${COUNTER_PATH}`; // read-only
 const HIT_URL = `https://api.visitorbadge.io/api/hit?path=${COUNTER_PATH}`; // +1
 
-/** Floor guaranteeing a stable, never-zero reading across all clients. */
-export const VISITOR_BASELINE = 120;
+/** Minimum displayed floor — the count never renders below this on any client. */
+export const VISITOR_BASELINE = 2000;
 
 /** Cache of the last resolved total — doubles as the never-downgrade floor. */
 const CACHE_KEY = 'learn-git:visitors:v1';
