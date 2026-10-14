@@ -6,6 +6,11 @@
   --line: #2e3d4d;
   --haze: #8fa0b2;
   --text: #e8eef4;
+  /* Brand accent — taken from the Git logo (primary red + light-red tile). */
+  --git: #e63a2c;
+  --git-bright: #ff5a48;
+  --git-tile: #fde8e6;
+  /* Board semantic colors (the three-area model) — distinct from the brand accent. */
   --work: #f59e0b;
   --stage: #2dd4bf;
   --repo: #8b5cf6;
@@ -70,13 +75,25 @@ body {
 }
 
 .brand {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.brand span {
-  color: var(--work);
+.brand-logo {
+  display: block;
+  flex: none;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--git) 45%, transparent));
+}
+
+.brand-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: 16px;
+}
+
+.brand-name span {
+  color: var(--git-bright);
 }
 
 .level-title {
@@ -166,8 +183,8 @@ html[dir='rtl'] .lang-option {
 
 .lang-option:hover,
 .lang-option.on {
-  background: var(--work);
-  color: #000;
+  background: var(--git);
+  color: #fff;
 }
 
 /* Nav drawer & buttons */
@@ -276,7 +293,7 @@ html[dir='rtl'] .lang-option {
 
 .visitor-icon {
   opacity: 0.85;
-  color: var(--work);
+  color: var(--git-bright);
 }
 
 .tb-link {
@@ -802,7 +819,7 @@ html[dir='rtl'] .lang-option {
 
 .prompt {
   font-family: var(--mono);
-  color: var(--work);
+  color: var(--git-bright);
   font-size: 13px;
   font-weight: 700;
 }
@@ -816,8 +833,8 @@ html[dir='rtl'] .lang-option {
 }
 
 .term-input-wrap:focus-within {
-  border-color: var(--work);
-  outline: 2px solid color-mix(in srgb, var(--work) 55%, transparent);
+  border-color: var(--git);
+  outline: 2px solid color-mix(in srgb, var(--git) 55%, transparent);
   outline-offset: 1px;
 }
 
@@ -899,7 +916,7 @@ html[dir='rtl'] .lang-option {
 }
 
 .modal h2 span {
-  color: var(--work);
+  color: var(--git-bright);
 }
 
 .modal .markdown {
@@ -943,9 +960,9 @@ html[dir='rtl'] .lang-option {
 }
 
 .modal-actions button.primary {
-  background: var(--work);
-  border-color: var(--work);
-  color: #000;
+  background: var(--git);
+  border-color: var(--git);
+  color: #fff;
   font-weight: 700;
 }
 
@@ -972,7 +989,7 @@ html[dir='rtl'] .lang-option {
   font-weight: 700;
   font-size: 13.5px;
   margin-bottom: 6px;
-  color: var(--work);
+  color: var(--git-bright);
 }
 
 .why-card-body {
@@ -1052,8 +1069,8 @@ html[dir='rtl'] .lang-option {
   position: relative;
   font-size: 42px;
   line-height: 1;
-  color: var(--work);
-  text-shadow: 0 0 18px color-mix(in srgb, var(--work) 55%, transparent);
+  color: var(--git-bright);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--git-bright) 55%, transparent);
   animation: star-bounce 700ms cubic-bezier(0.2, 0.9, 0.3, 1.4);
 }
 
@@ -1119,7 +1136,7 @@ html[dir='rtl'] .lang-option {
 
 .prog-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--work), var(--stage));
+  background: linear-gradient(90deg, var(--git-bright), var(--stage));
   border-radius: inherit;
   transition: width 0.6s ease;
 }
@@ -1333,8 +1350,8 @@ html[dir='rtl'] .level-row {
 }
 
 .diff-dot.on {
-  background: var(--work);
-  border-color: var(--work);
+  background: var(--git);
+  border-color: var(--git);
 }
 
 .legend-box {
@@ -1408,14 +1425,14 @@ html[dir='rtl'] .level-row {
 }
 
 .ui-tour-on {
-  outline: 2px dashed var(--work) !important;
+  outline: 2px dashed var(--git-bright) !important;
   outline-offset: 3px;
   animation: tour-pulse 1.2s ease-in-out infinite;
 }
 
 @keyframes tour-pulse {
-  0%, 100% { outline-color: var(--work); }
-  50% { outline-color: var(--ok); }
+  0%, 100% { outline-color: var(--git-bright); }
+  50% { outline-color: var(--git); }
 }
 
 .visually-hidden {
