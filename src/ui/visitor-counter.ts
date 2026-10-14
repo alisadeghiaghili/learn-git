@@ -19,7 +19,7 @@ const GET_URL = `https://api.visitorbadge.io/api/get?path=${COUNTER_PATH}`; // r
 const HIT_URL = `https://api.visitorbadge.io/api/hit?path=${COUNTER_PATH}`; // +1
 
 /** Minimum displayed floor — the count never renders below this on any client. */
-export const VISITOR_BASELINE = 2000;
+export const VISITOR_BASELINE = 24;
 
 /** Cache of the last resolved total — doubles as the never-downgrade floor. */
 const CACHE_KEY = 'learn-git:visitors:v1';
