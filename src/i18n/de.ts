@@ -60,7 +60,7 @@ export const de: Catalog = {
     github: 'GitHub',
     githubTitle: 'Repository auf GitHub anzeigen',
     visitors: (count) => `${count} Lernende`,
-    visitorsTitle: 'Gesamtzahl der Lernenden auf LearnGit',
+    visitorsTitle: 'Gesamtzahl der Besuche (synchronisiert)',
     support: 'Kaffee spendieren',
     supportTitle: 'Projekt auf Buy Me a Coffee unterstützen',
     guidePanel: 'Lernleitfaden-Panel',

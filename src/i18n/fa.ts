@@ -128,7 +128,7 @@ export const fa: Catalog = {
     github: 'گیت‌هاب',
     githubTitle: 'مشاهده مخزن پروژه در گیت‌هاب',
     visitors: (count) => `${count} یادگیرنده`,
-    visitorsTitle: 'تعداد کل یادگیرندگانی که با LearnGit تمرین کرده‌اند',
+    visitorsTitle: 'مجموع کل بازدیدهای سایت (همگام‌شده)',
     support: 'حمایت مالی',
     supportTitle: 'حمایت از پروژه در Buy Me a Coffee',
     guidePanel: 'پنل راهنمای یادگیری',
