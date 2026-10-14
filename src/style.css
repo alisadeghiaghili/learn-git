@@ -1350,8 +1350,8 @@ html[dir='rtl'] .level-row {
 }
 
 .diff-dot.on {
-  background: var(--git);
-  border-color: var(--git);
+  background: var(--work);
+  border-color: var(--work);
 }
 
 .legend-box {
